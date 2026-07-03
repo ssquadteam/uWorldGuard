@@ -21,8 +21,11 @@ public class UWorldGuardLoader implements PluginLoader {
 
         resolver.addDependency(new Dependency(
             new DefaultArtifact("org.incendo:cloud-paper:2.0.0-beta.15"), null));
+        // InvUI 1.x ships `invui` as a pom-only aggregator (no jar); request it as a `pom`
+        // artifact so Aether resolves the descriptor and pulls its transitive jars
+        // (invui-core + the versioned inventory-access-r* NMS modules).
         resolver.addDependency(new Dependency(
-            new DefaultArtifact("xyz.xenondevs.invui:invui:2.1.0"), null));
+            new DefaultArtifact("xyz.xenondevs.invui:invui:pom:1.49"), null));
         resolver.addDependency(new Dependency(
             new DefaultArtifact("org.incendo:cloud-annotations:2.0.0"), null));
         resolver.addDependency(new Dependency(

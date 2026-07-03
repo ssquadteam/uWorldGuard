@@ -4,17 +4,21 @@ import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.region.ApplicableRegionSet;
 import com.tricrotism.uworldguard.region.RegionQuery;
-import org.bukkit.Location;
+import com.tricrotism.uworldguard.text.MessageService;
+import org.bukkit.block.Block;
+import org.bukkit.block.Container;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.player.PlayerBedEnterEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemDamageEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.vehicle.VehicleEnterEvent;
+import org.bukkit.inventory.EquipmentSlot;
 import org.jspecify.annotations.NullMarked;
 
 /**
@@ -27,9 +31,11 @@ public final class PlayerStateListener implements Listener {
     private static final String BYPASS = "uworldguard.bypass";
 
     private final RegionQuery query;
+    private final MessageService messages;
 
-    public PlayerStateListener(final RegionQuery query) {
+    public PlayerStateListener(final RegionQuery query, final MessageService messages) {
         this.query = query;
+        this.messages = messages;
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -65,20 +71,25 @@ public final class PlayerStateListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onChestAccess(final InventoryOpenEvent event) {
+    public void onChestAccess(final PlayerInteractEvent event) {
         if (EventGate.disabled(event)) {
             return;
         }
-        final Location location = event.getInventory().getLocation();
-        if (location == null || !(event.getPlayer() instanceof Player player)) {
+        if (event.getAction() != Action.RIGHT_CLICK_BLOCK || event.getHand() != EquipmentSlot.HAND) {
             return;
         }
-        final ApplicableRegionSet set = query.getApplicableRegions(location);
+        final Block block = event.getClickedBlock();
+        if (block == null || !(block.getState(false) instanceof Container)) {
+            return;
+        }
+        final Player player = event.getPlayer();
+        final ApplicableRegionSet set = query.getApplicableRegions(block);
         if (!set.testState(Flags.CHEST_ACCESS) && !set.canBuild(player.getUniqueId())) {
             if (player.hasPermission(BYPASS)) {
                 return;
             }
             event.setCancelled(true);
+            messages.send(player, "no-permission");
         }
     }
 

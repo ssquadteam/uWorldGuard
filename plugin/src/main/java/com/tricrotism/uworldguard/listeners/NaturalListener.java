@@ -6,6 +6,7 @@ import com.tricrotism.uworldguard.flags.StateFlag;
 import com.tricrotism.uworldguard.region.RegionQuery;
 import org.bukkit.Material;
 import org.bukkit.block.BlockState;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -74,6 +75,14 @@ public final class NaturalListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onForm(final BlockFormEvent event) {
         if (EventGate.disabled(event)) {
+            return;
+        }
+
+        if (event instanceof EntityBlockFormEvent entityForm
+            && entityForm.getEntity() instanceof Player
+            && !query.testState(event.getBlock(), Flags.FROSTWALKER)
+        ) {
+            event.setCancelled(true);
             return;
         }
         final BlockState newState = event.getNewState();

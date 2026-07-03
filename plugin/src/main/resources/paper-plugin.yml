@@ -21,6 +21,10 @@ dependencies:
             load: BEFORE
             required: false
             join-classpath: true
+        GSit:
+            load: BEFORE
+            required: false
+            join-classpath: true
 
 authors: [ tricrotism ]
 website: https://tricrotism.com

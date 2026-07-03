@@ -9,10 +9,7 @@ import org.bukkit.entity.*;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.entity.EntityDamageByEntityEvent;
-import org.bukkit.event.entity.EntityPickupItemEvent;
-import org.bukkit.event.entity.EntityResurrectEvent;
-import org.bukkit.event.entity.ProjectileLaunchEvent;
+import org.bukkit.event.entity.*;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
@@ -121,26 +118,31 @@ public final class ItemUseListener implements Listener {
         }
     }
 
+    // The wind-charge flag gates the burst's knockback, not the throw, so players can still launch
+    // themselves (the self-jump) in a denied region while being unable to blast other entities around.
+    // Only the deprecated EntityKnockbackByEntityEvent exposes the wind charge as the push source; the
+    // modern event resolves it to the thrower, which can't be told apart from their other explosions.
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onWindCharge(final ProjectileLaunchEvent event) {
+    @SuppressWarnings({"deprecation", "removal"})
+    public void onWindChargeKnockback(final EntityKnockbackByEntityEvent event) {
         if (EventGate.disabled(event)) {
             return;
         }
-        if (!(event.getEntity() instanceof AbstractWindCharge windCharge)) {
+        if (!(event.getSourceEntity() instanceof AbstractWindCharge windCharge)) {
             return;
         }
-
-        if (!(windCharge.getShooter() instanceof Player player)) {
+        final Entity victim = event.getEntity();
+        final ProjectileSource shooter = windCharge.getShooter();
+        if (shooter instanceof Entity thrower && thrower.equals(victim)) {
             return;
         }
-
-        if (!query.testState(player, Flags.WIND_CHARGE)) {
-            if (player.hasPermission(BYPASS)) {
-                return;
-            }
-            event.setCancelled(true);
-            messages.send(player, "no-permission");
+        if (query.testState(victim, Flags.WIND_CHARGE)) {
+            return;
         }
+        if (shooter instanceof Player player && player.hasPermission(BYPASS)) {
+            return;
+        }
+        event.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)

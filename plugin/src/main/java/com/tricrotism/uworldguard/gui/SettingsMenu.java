@@ -7,10 +7,10 @@ import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 import org.jspecify.annotations.NullMarked;
-import xyz.xenondevs.invui.gui.Markers;
 import xyz.xenondevs.invui.gui.PagedGui;
+import xyz.xenondevs.invui.gui.structure.Markers;
 import xyz.xenondevs.invui.item.Item;
-import xyz.xenondevs.invui.item.ItemBuilder;
+import xyz.xenondevs.invui.item.builder.ItemBuilder;
 import xyz.xenondevs.invui.window.Window;
 
 import java.util.ArrayList;
@@ -37,7 +37,7 @@ public final class SettingsMenu {
     }
 
     public void open(final Player player) {
-        final PagedGui<Item> gui = PagedGui.itemsBuilder()
+        final PagedGui<Item> gui = PagedGui.items()
             .setStructure(
                 "x x x x x x x x x",
                 "x x x x x x x x x",
@@ -53,10 +53,10 @@ public final class SettingsMenu {
             .setContent(messageItems())
             .build();
 
-        Window.builder()
+        Window.single()
             .setViewer(player)
-            .setTitle(Messages.format("<dark_gray>Messages"))
-            .setUpperGui(gui)
+            .setTitle(MenuItems.wrap(Messages.format("<dark_gray>Messages")))
+            .setGui(gui)
             .build()
             .open();
     }
@@ -64,18 +64,17 @@ public final class SettingsMenu {
     private List<Item> messageItems() {
         final List<Item> items = new ArrayList<>();
         for (final String key : messages.keys()) {
-            items.add(Item.builder()
-                .setItemProvider(viewer -> {
+            items.add(MenuItems.clickable(
+                () -> {
                     final String value = messages.raw(key);
                     return new ItemBuilder(Material.PAPER)
-                        .setName(MM.deserialize("<!i><yellow>" + key))
+                        .setDisplayName(MenuItems.wrap(MM.deserialize("<!i><yellow>" + key)))
                         .addLoreLines(
-                            MM.deserialize("<!i><gray>Value: <white>"
-                                + (value == null || value.isBlank() ? "<disabled>" : value)),
-                            Messages.format("<!i><dark_gray>Click to edit (chat)"));
-                })
-                .addClickHandler((item, click) -> promptMessage(click.player(), key))
-                .build());
+                            MenuItems.wrap(MM.deserialize("<!i><gray>Value: <white>"
+                                + (value == null || value.isBlank() ? "<disabled>" : value))),
+                            MenuItems.wrap(Messages.format("<!i><dark_gray>Click to edit (chat)")));
+                },
+                (_, _, player) -> promptMessage(player, key)));
         }
         return items;
     }
@@ -92,14 +91,13 @@ public final class SettingsMenu {
     }
 
     private Item cooldownItem() {
-        return Item.builder()
-            .setItemProvider(viewer -> new ItemBuilder(Material.CLOCK)
-                .setName(Messages.format("<!i><yellow>Message cooldown"))
+        return MenuItems.clickable(
+            () -> new ItemBuilder(Material.CLOCK)
+                .setDisplayName(MenuItems.wrap(Messages.format("<!i><yellow>Message cooldown")))
                 .addLoreLines(
-                    MM.deserialize("<!i><gray>Seconds: <white>" + messages.cooldownSeconds()),
-                    Messages.format("<!i><dark_gray>Click to edit (chat)")))
-            .addClickHandler((item, click) -> promptCooldown(click.player()))
-            .build();
+                    MenuItems.wrap(MM.deserialize("<!i><gray>Seconds: <white>" + messages.cooldownSeconds())),
+                    MenuItems.wrap(Messages.format("<!i><dark_gray>Click to edit (chat)"))),
+            (_, _, player) -> promptCooldown(player));
     }
 
     private void promptCooldown(final Player player) {

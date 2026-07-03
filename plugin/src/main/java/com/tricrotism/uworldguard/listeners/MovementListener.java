@@ -8,6 +8,7 @@ import com.tricrotism.uworldguard.region.ProtectedRegion;
 import com.tricrotism.uworldguard.region.RegionQuery;
 import com.tricrotism.uworldguard.service.ChamberedPearlTracker;
 import com.tricrotism.uworldguard.service.CollisionService;
+import com.tricrotism.uworldguard.text.ChatTags;
 import com.tricrotism.uworldguard.text.MessageService;
 import com.tricrotism.uworldguard.util.Locations;
 import io.papermc.paper.event.entity.EntityMoveEvent;
@@ -21,6 +22,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDismountEvent;
 import org.bukkit.event.entity.EntityMountEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.vehicle.VehicleMoveEvent;
@@ -47,19 +49,24 @@ public final class MovementListener implements Listener {
     private final MessageService messages;
     private final CollisionService collision;
     private final ChamberedPearlTracker pearls;
+    private final ChatTags chatTags;
     private final Map<UUID, GameMode> savedGameModes = new ConcurrentHashMap<>();
     private final Map<UUID, Float> savedWalkSpeed = new ConcurrentHashMap<>();
     private final Map<UUID, Float> savedFlySpeed = new ConcurrentHashMap<>();
     private final Map<UUID, Boolean> savedAllowFlight = new ConcurrentHashMap<>();
     private final Set<UUID> riddenMounts = ConcurrentHashMap.newKeySet();
+    private final Set<UUID> hidden = ConcurrentHashMap.newKeySet();
 
-    public MovementListener(final Plugin plugin, final RegionQuery query, final MessageService messages,
-                            final CollisionService collision, final ChamberedPearlTracker pearls) {
+    public MovementListener(
+        final Plugin plugin, final RegionQuery query, final MessageService messages,
+        final CollisionService collision, final ChamberedPearlTracker pearls, final ChatTags chatTags
+    ) {
         this.plugin = plugin;
         this.query = query;
         this.messages = messages;
         this.collision = collision;
         this.pearls = pearls;
+        this.chatTags = chatTags;
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -411,6 +418,61 @@ public final class MovementListener implements Listener {
         }
 
         collision.set(player, Boolean.TRUE.equals(toSet.queryValue(Flags.DISABLE_COLLISION)));
+
+        chatTags.setPrefix(uuid, toSet.queryValue(Flags.CHAT_PREFIX));
+        chatTags.setSuffix(uuid, toSet.queryValue(Flags.CHAT_SUFFIX));
+
+        applyHidePlayers(player, uuid, Boolean.TRUE.equals(toSet.queryValue(Flags.HIDE_PLAYERS)));
+    }
+
+    /**
+     * Hides every other online player from {@code player} while inside a hide-players region, and
+     * restores them on leaving. State-transition based: the O(n) hide/show loop only runs when the
+     * player crosses into or out of the hidden state, never per move.
+     */
+    private void applyHidePlayers(final Player player, final UUID uuid, final boolean shouldHide) {
+        if (shouldHide) {
+            if (hidden.add(uuid)) {
+                for (final Player other : Bukkit.getOnlinePlayers()) {
+                    if (other != player) {
+                        player.hidePlayer(plugin, other);
+                    }
+                }
+            }
+        } else if (hidden.remove(uuid)) {
+            for (final Player other : Bukkit.getOnlinePlayers()) {
+                if (other != player) {
+                    player.showPlayer(plugin, other);
+                }
+            }
+        }
+    }
+
+    /**
+     * On login, teleports the player out if they log in where the join-location flag is set, and
+     * hides the newcomer from anyone currently inside a hide-players region so the late join does not
+     * leak into their view. Both run on the relevant player's own scheduler for Folia safety.
+     */
+    @EventHandler
+    public void onJoin(final PlayerJoinEvent event) {
+        final Player joiner = event.getPlayer();
+
+        if (!hidden.isEmpty()) {
+            for (final UUID viewerId : hidden) {
+                final Player viewer = Bukkit.getPlayer(viewerId);
+                if (viewer != null && viewer != joiner) {
+                    viewer.getScheduler().run(plugin, task -> viewer.hidePlayer(plugin, joiner), null);
+                }
+            }
+        }
+
+        final String raw = query.queryValue(joiner, Flags.JOIN_LOCATION);
+        if (raw != null && !raw.isBlank()) {
+            final Location target = Locations.parse(messages.expand(joiner, raw));
+            if (target != null) {
+                joiner.getScheduler().run(plugin, task -> joiner.teleport(target), null);
+            }
+        }
     }
 
     @EventHandler
@@ -420,6 +482,8 @@ public final class MovementListener implements Listener {
         messages.clear(uuid);
         collision.set(player, false);
         pearls.clear(uuid);
+        chatTags.clear(uuid);
+        hidden.remove(uuid);
 
         final GameMode mode = savedGameModes.remove(uuid);
         if (mode != null) {

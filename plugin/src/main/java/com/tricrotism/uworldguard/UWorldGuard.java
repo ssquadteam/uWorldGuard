@@ -5,6 +5,7 @@ import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.config.Settings;
 import com.tricrotism.uworldguard.gui.ChatInputListener;
 import com.tricrotism.uworldguard.gui.ChatInputService;
+import com.tricrotism.uworldguard.integration.GSitIntegration;
 import com.tricrotism.uworldguard.listeners.*;
 import com.tricrotism.uworldguard.migration.MigrationCommands;
 import com.tricrotism.uworldguard.region.RegionContainer;
@@ -12,12 +13,11 @@ import com.tricrotism.uworldguard.region.RegionContainerImpl;
 import com.tricrotism.uworldguard.region.RegionQuery;
 import com.tricrotism.uworldguard.selection.SelectionService;
 import com.tricrotism.uworldguard.selection.WandSelectionProvider;
-import com.tricrotism.uworldguard.service.ChamberedPearlTracker;
-import com.tricrotism.uworldguard.service.CollisionService;
-import com.tricrotism.uworldguard.service.HealService;
+import com.tricrotism.uworldguard.service.*;
 import com.tricrotism.uworldguard.storage.RegionStore;
 import com.tricrotism.uworldguard.storage.SqlRegionStore;
 import com.tricrotism.uworldguard.storage.YamlRegionStore;
+import com.tricrotism.uworldguard.text.ChatTags;
 import com.tricrotism.uworldguard.text.MessageService;
 import org.bstats.bukkit.Metrics;
 import org.bukkit.plugin.ServicePriority;
@@ -42,6 +42,11 @@ public final class UWorldGuard extends JavaPlugin {
         settings.load(getConfig());
         EventGate.load(getConfig());
 
+        // Register GSit's flags before regions load so stored sit/playersit/pose/crawl values resolve.
+        if (GSitIntegration.isPresent(getServer())) {
+            GSitIntegration.registerFlags();
+        }
+
         final RegionStore store = createStore(settings);
 
         final RegionContainerImpl regionContainer = new RegionContainerImpl(this, store);
@@ -58,14 +63,15 @@ public final class UWorldGuard extends JavaPlugin {
         final CollisionService collision = new CollisionService(this);
         final ChamberedPearlTracker pearls = new ChamberedPearlTracker(this);
         final ChatInputService chatInput = new ChatInputService();
+        final ChatTags chatTags = new ChatTags();
 
         getServer().getPluginManager().registerEvents(new BuildProtectionListener(query, messages), this);
         getServer().getPluginManager().registerEvents(
-            new MovementListener(this, query, messages, collision, pearls), this);
+            new MovementListener(this, query, messages, collision, pearls, chatTags), this);
         getServer().getPluginManager().registerEvents(new NaturalListener(query), this);
         getServer().getPluginManager().registerEvents(new CropTrampleListener(query), this);
         getServer().getPluginManager().registerEvents(new EntityListener(query), this);
-        getServer().getPluginManager().registerEvents(new PlayerStateListener(query), this);
+        getServer().getPluginManager().registerEvents(new PlayerStateListener(query, messages), this);
         getServer().getPluginManager().registerEvents(new ItemUseListener(query, messages), this);
         getServer().getPluginManager().registerEvents(new EndCrystalListener(query, messages), this);
         getServer().getPluginManager().registerEvents(new WorkbenchListener(query, messages), this);
@@ -74,6 +80,7 @@ public final class UWorldGuard extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new PearlListener(pearls), this);
         getServer().getPluginManager().registerEvents(new ChatInputListener(this, chatInput), this);
         getServer().getPluginManager().registerEvents(new WorldListener(regionContainer), this);
+        getServer().getPluginManager().registerEvents(new ChatListener(chatTags), this);
         final WandSelectionProvider wand = selection.wandListener();
         if (wand != null) {
             getServer().getPluginManager().registerEvents(wand, this);
@@ -83,6 +90,15 @@ public final class UWorldGuard extends JavaPlugin {
             .register(new MigrationCommands(this, regionContainer));
 
         new HealService(this, regionContainer, query).start();
+        new EffectService(this, regionContainer, query).start();
+        new ChunkUnloadService(this, regionContainer).start();
+
+        if (getServer().getPluginManager().getPlugin("WorldEdit") != null) {
+            new WorldEditFlagGuard(query, regionContainer).register();
+        }
+        if (GSitIntegration.isPresent(getServer())) {
+            new GSitIntegration(query).register(this);
+        }
 
         if (settings.autoSaveMinutes() > 0) {
             final long period = settings.autoSaveMinutes();

@@ -11,7 +11,7 @@ cloud-annotations = "2.0.0"
 packetevents = "2.7.0"
 worldedit = "7.3.8"
 placeholderapi = "2.11.6"
-invui = "2.1.0"
+invui = "1.49"
 caffeine = "3.1.8"
 bstats = "3.2.1"
 

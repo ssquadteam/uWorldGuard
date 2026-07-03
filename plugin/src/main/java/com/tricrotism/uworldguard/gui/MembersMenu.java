@@ -12,10 +12,10 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
-import xyz.xenondevs.invui.gui.Markers;
 import xyz.xenondevs.invui.gui.PagedGui;
+import xyz.xenondevs.invui.gui.structure.Markers;
 import xyz.xenondevs.invui.item.Item;
-import xyz.xenondevs.invui.item.ItemBuilder;
+import xyz.xenondevs.invui.item.builder.ItemBuilder;
 import xyz.xenondevs.invui.window.Window;
 
 import java.util.ArrayList;
@@ -46,7 +46,7 @@ public final class MembersMenu {
     }
 
     public void open(final Player player) {
-        final PagedGui<Item> built = PagedGui.itemsBuilder()
+        final PagedGui<Item> built = PagedGui.items()
             .setStructure(
                 "x x x x x x x x x",
                 "x x x x x x x x x",
@@ -64,10 +64,10 @@ public final class MembersMenu {
             .build();
         this.gui = built;
 
-        Window.builder()
+        Window.single()
             .setViewer(player)
-            .setTitle(MM.deserialize("<dark_gray>Members: <aqua>" + region.getId()))
-            .setUpperGui(built)
+            .setTitle(MenuItems.wrap(MM.deserialize("<dark_gray>Members: <aqua>" + region.getId())))
+            .setGui(built)
             .build()
             .open();
     }
@@ -84,29 +84,27 @@ public final class MembersMenu {
     }
 
     private Item entry(final UUID uuid, final boolean owner) {
-        return Item.builder()
-            .setItemProvider(new ItemBuilder(Material.PLAYER_HEAD)
-                .setName(MM.deserialize("<!i><yellow>" + nameOf(uuid)))
+        return MenuItems.clickable(
+            () -> new ItemBuilder(Material.PLAYER_HEAD)
+                .setDisplayName(MenuItems.wrap(MM.deserialize("<!i><yellow>" + nameOf(uuid))))
                 .addLoreLines(
-                    MM.deserialize("<!i><gray>" + (owner ? "Owner" : "Member")),
-                    Messages.format("<!i><dark_gray>Click to remove")))
-            .addClickHandler((item, click) -> {
+                    MenuItems.wrap(MM.deserialize("<!i><gray>" + (owner ? "Owner" : "Member"))),
+                    MenuItems.wrap(Messages.format("<!i><dark_gray>Click to remove"))),
+            (_, _, _) -> {
                 (owner ? region.getOwners() : region.getMembers()).removePlayer(uuid);
                 manager.markDirty();
                 if (gui != null) {
                     gui.setContent(entries());
                 }
-            })
-            .build();
+            });
     }
 
     private Item addItem(final boolean owner) {
-        return Item.builder()
-            .setItemProvider(new ItemBuilder(owner ? Material.GOLDEN_HELMET : Material.LEATHER_HELMET)
-                .setName(MM.deserialize("<!i><green>Add " + (owner ? "owner" : "member")))
-                .addLoreLines(Messages.format("<!i><dark_gray>Click, then type a player name")))
-            .addClickHandler((item, click) -> promptAdd(click.player(), owner))
-            .build();
+        return MenuItems.clickable(
+            () -> new ItemBuilder(owner ? Material.GOLDEN_HELMET : Material.LEATHER_HELMET)
+                .setDisplayName(MenuItems.wrap(MM.deserialize("<!i><green>Add " + (owner ? "owner" : "member"))))
+                .addLoreLines(MenuItems.wrap(Messages.format("<!i><dark_gray>Click, then type a player name"))),
+            (_, _, player) -> promptAdd(player, owner));
     }
 
     private void promptAdd(final Player player, final boolean owner) {

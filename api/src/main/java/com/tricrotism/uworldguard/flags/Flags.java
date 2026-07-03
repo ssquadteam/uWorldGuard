@@ -38,6 +38,7 @@ public final class Flags {
     public static final StateFlag LIGHTER = register(FlagCategory.PROTECTION, new StateFlag("lighter", true));
     public static final StateFlag END_CRYSTAL_PLACE = register(FlagCategory.PROTECTION, new StateFlag("end-crystal-place", true));
     public static final StateFlag END_CRYSTAL_INTERACT = register(FlagCategory.PROTECTION, new StateFlag("end-crystal-interact", true));
+    public static final StateFlag WORLDEDIT = register(FlagCategory.PROTECTION, new StateFlag("worldedit", true));
     public static final StateFlag ENTRY = register(FlagCategory.ENTRY, new StateFlag("entry", true));
     public static final StateFlag EXIT = register(FlagCategory.ENTRY, new StateFlag("exit", true));
 
@@ -62,6 +63,8 @@ public final class Flags {
     public static final StateFlag CROP_GROWTH = register(FlagCategory.ENVIRONMENT, new StateFlag("crop-growth", true));
     public static final StateFlag VINE_GROWTH = register(FlagCategory.ENVIRONMENT, new StateFlag("vine-growth", true));
     public static final StateFlag CROP_TRAMPLE = register(FlagCategory.ENVIRONMENT, new StateFlag("crop-trample", true));
+    public static final StateFlag FROSTWALKER = register(FlagCategory.ENVIRONMENT, new StateFlag("frostwalker", true));
+    public static final StateFlag CHUNK_UNLOAD = register(FlagCategory.ENVIRONMENT, new StateFlag("chunk-unload", true));
 
     // Movement & teleport.
     public static final StateFlag ENDERPEARL = register(FlagCategory.MOVEMENT, new StateFlag("enderpearl", true));
@@ -70,6 +73,8 @@ public final class Flags {
     // Messages & effects.
     public static final StringFlag GREETING = register(FlagCategory.MESSAGES, new StringFlag("greeting"));
     public static final StringFlag FAREWELL = register(FlagCategory.MESSAGES, new StringFlag("farewell"));
+    public static final StringFlag CHAT_PREFIX = register(FlagCategory.MESSAGES, new StringFlag("chat-prefix"));
+    public static final StringFlag CHAT_SUFFIX = register(FlagCategory.MESSAGES, new StringFlag("chat-suffix"));
     public static final StringFlag ENTRY_DENY_MESSAGE = register(FlagCategory.MESSAGES, new StringFlag("entry-deny-message"));
     public static final StringFlag EXIT_DENY_MESSAGE = register(FlagCategory.MESSAGES, new StringFlag("exit-deny-message"));
     public static final BooleanFlag INVINCIBLE = register(FlagCategory.PLAYER, new BooleanFlag("invincible"));
@@ -77,6 +82,9 @@ public final class Flags {
     public static final DoubleFlag HEAL_MIN_HEALTH = register(FlagCategory.PLAYER, new DoubleFlag("heal-min-health"));
     public static final DoubleFlag HEAL_MAX_HEALTH = register(FlagCategory.PLAYER, new DoubleFlag("heal-max-health"));
     public static final StringFlag GAME_MODE = register(FlagCategory.PLAYER, new StringFlag("game-mode"));
+    public static final PotionEffectSetFlag GIVE_EFFECTS = register(FlagCategory.PLAYER, new PotionEffectSetFlag("give-effects"));
+    public static final PotionEffectSetFlag BLOCKED_EFFECTS = register(FlagCategory.PLAYER, new PotionEffectSetFlag("blocked-effects"));
+    public static final BooleanFlag HIDE_PLAYERS = register(FlagCategory.PLAYER, new BooleanFlag("hide-players"));
 
     // Item-use control.
     public static final MaterialSetFlag DISABLE_COMPLETELY = register(FlagCategory.ITEMS, new MaterialSetFlag("disable-completely"));
@@ -109,6 +117,7 @@ public final class Flags {
     public static final StringFlag CONSOLE_COMMAND_ON_EXIT = register(FlagCategory.ENTRY, new StringFlag("console-command-on-exit"));
     public static final StringFlag PLAY_SOUNDS = register(FlagCategory.MESSAGES, new StringFlag("play-sounds"));
     public static final StringFlag RESPAWN_LOCATION = register(FlagCategory.ENTRY, new StringFlag("respawn-location"));
+    public static final StringFlag JOIN_LOCATION = register(FlagCategory.ENTRY, new StringFlag("join-location"));
 
     // Continuous player state while inside.
     public static final DoubleFlag WALK_SPEED = register(FlagCategory.PLAYER, new DoubleFlag("walk-speed"));

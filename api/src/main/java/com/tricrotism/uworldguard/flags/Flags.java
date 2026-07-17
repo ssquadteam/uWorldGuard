@@ -32,6 +32,7 @@ public final class Flags {
     public static final StateFlag CHEST_ACCESS = register(FlagCategory.PROTECTION, new StateFlag("chest-access", true));
     public static final StateFlag PVP = register(FlagCategory.PROTECTION, new StateFlag("pvp", true));
     public static final StateFlag DAMAGE_ANIMALS = register(FlagCategory.PROTECTION, new StateFlag("damage-animals", true));
+    public static final StateFlag FALL_DAMAGE = register(FlagCategory.PROTECTION, new StateFlag("fall-damage", true));
     public static final StateFlag RIDE = register(FlagCategory.PROTECTION, new StateFlag("ride", true));
     public static final StateFlag SLEEP = register(FlagCategory.PROTECTION, new StateFlag("sleep", true));
     public static final StateFlag TNT = register(FlagCategory.PROTECTION, new StateFlag("tnt", true));

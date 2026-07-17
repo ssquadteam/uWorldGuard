@@ -22,8 +22,8 @@ import org.bukkit.inventory.EquipmentSlot;
 import org.jspecify.annotations.NullMarked;
 
 /**
- * Enforces sleep, enderpearl/chorus teleport, chest-access, ride, invincible/godmode, and
- * item-durability flags.
+ * Enforces sleep, enderpearl/chorus teleport, chest-access, ride, invincible/godmode, fall-damage,
+ * and item-durability flags.
  */
 @NullMarked
 public final class PlayerStateListener implements Listener {
@@ -111,7 +111,7 @@ public final class PlayerStateListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onInvincible(final EntityDamageEvent event) {
+    public void onDamage(final EntityDamageEvent event) {
         if (EventGate.disabled(event)) {
             return;
         }
@@ -121,6 +121,11 @@ public final class PlayerStateListener implements Listener {
         final ApplicableRegionSet set = query.getApplicableRegions(player);
         if (Boolean.TRUE.equals(set.queryValue(Flags.INVINCIBLE))
             || Boolean.TRUE.equals(set.queryValue(Flags.GODMODE))) {
+            event.setCancelled(true);
+            return;
+        }
+        if (event.getCause() == EntityDamageEvent.DamageCause.FALL
+            && !set.testState(Flags.FALL_DAMAGE)) {
             event.setCancelled(true);
         }
     }

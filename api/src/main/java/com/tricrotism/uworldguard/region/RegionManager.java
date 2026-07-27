@@ -1,6 +1,7 @@
 package com.tricrotism.uworldguard.region;
 
 import com.tricrotism.uworldguard.flags.Flag;
+import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.util.BlockVector3;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
@@ -33,7 +34,10 @@ public final class RegionManager {
     private volatile @Nullable ApplicableRegionSet emptySet;
 
     private volatile boolean flagIndexStale = true;
-    private volatile Set<Flag<?>> usedFlags = Set.of();
+    private volatile long[] usedFlagBits = EMPTY_BITS;
+    private volatile boolean groupsInUse;
+
+    private static final long[] EMPTY_BITS = new long[0];
 
     private static final int CHUNK_CACHE_BITS = 14;
     private static final int CHUNK_CACHE_SLOTS = 1 << CHUNK_CACHE_BITS; // 16384
@@ -102,15 +106,22 @@ public final class RegionManager {
     }
 
     /**
-     * Whether any region in this world sets {@code flag} directly. Backed by a cached index
-     * rebuilt lazily after a mutation, so repeated polling (e.g. the heal task) is a single
-     * set lookup. Inherited flags count because the parent that defines them is itself a region.
+     * Whether any region in this world sets {@code flag} directly. Backed by a bitset over
+     * {@link Flag#getIndex()} rebuilt lazily after a mutation, so a check is a volatile read plus one
+     * word test — cheap enough to gate per-move flag reads, not just the once-a-second services.
+     * Inherited flags count because the parent that defines them is itself a region.
      */
     public boolean anyRegionUses(final Flag<?> flag) {
         if (flagIndexStale) {
             rebuildFlagIndex();
         }
-        return usedFlags.contains(flag);
+        final int index = flag.getIndex();
+        if (index < 0) {
+            return false;
+        }
+        final long[] bits = usedFlagBits;
+        final int word = index >> 6;
+        return word < bits.length && (bits[word] & (1L << index)) != 0L;
     }
 
     private synchronized void rebuildFlagIndex() {
@@ -118,11 +129,35 @@ public final class RegionManager {
             return;
         }
         flagIndexStale = false;
-        final Set<Flag<?>> used = new HashSet<>();
+        final long[] bits = new long[(Flags.count() >> 6) + 1];
+        boolean any = false;
+        boolean groups = false;
         for (final ProtectedRegion region : regions.values()) {
-            used.addAll(region.getFlags().keySet());
+            if (!region.getFlagGroups().isEmpty()) {
+                groups = true;
+            }
+            for (final Flag<?> flag : region.getFlags().keySet()) {
+                final int index = flag.getIndex();
+                if (index >= 0 && (index >> 6) < bits.length) {
+                    bits[index >> 6] |= 1L << index;
+                    any = true;
+                }
+            }
         }
-        usedFlags = used.isEmpty() ? Set.of() : Set.copyOf(used);
+        usedFlagBits = any ? bits : EMPTY_BITS;
+        groupsInUse = groups;
+    }
+
+    /**
+     * Whether any region in this world carries a group qualifier. Almost no server uses them, so this
+     * lets flag resolution skip the per-region association check entirely rather than paying two map
+     * lookups per region per flag on the hottest path in the plugin.
+     */
+    boolean anyFlagGroups() {
+        if (flagIndexStale) {
+            rebuildFlagIndex();
+        }
+        return groupsInUse;
     }
 
     public ApplicableRegionSet getApplicableRegions(final BlockVector3 point) {
@@ -162,7 +197,7 @@ public final class RegionManager {
         if (matches == null) {
             return emptySet();
         }
-        return new ApplicableRegionSet(matches, global);
+        return new ApplicableRegionSet(matches, global, this);
     }
 
     /**
@@ -225,7 +260,7 @@ public final class RegionManager {
         final GlobalProtectedRegion g = global;
         ApplicableRegionSet cached = emptySet;
         if (cached == null || cached.globalRegion() != g) {
-            cached = new ApplicableRegionSet(List.of(), g);
+            cached = new ApplicableRegionSet(List.of(), g, this);
             emptySet = cached;
         }
         return cached;

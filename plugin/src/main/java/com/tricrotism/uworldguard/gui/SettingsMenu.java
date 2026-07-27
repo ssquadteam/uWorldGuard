@@ -71,7 +71,8 @@ public final class SettingsMenu {
                         .setName(MM.deserialize("<!i><yellow>" + key))
                         .addLoreLines(
                             MM.deserialize("<!i><gray>Value: <white>"
-                                + (value == null || value.isBlank() ? "<disabled>" : value)),
+                                + (value == null || value.isBlank() || "false".equalsIgnoreCase(value)
+                                ? "<disabled>" : value)),
                             Messages.format("<!i><dark_gray>Click to edit (chat)"));
                 })
                 .addClickHandler((item, click) -> promptMessage(click.player(), key))

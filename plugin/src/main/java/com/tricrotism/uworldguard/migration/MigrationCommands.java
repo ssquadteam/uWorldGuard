@@ -1,6 +1,7 @@
 package com.tricrotism.uworldguard.migration;
 
 import com.tricrotism.uworldguard.UWorldGuard;
+import com.tricrotism.uworldguard.region.FlagGroupSupport;
 import com.tricrotism.uworldguard.region.RegionContainerImpl;
 import com.tricrotism.uworldguard.region.RegionManager;
 import com.tricrotism.uworldguard.text.Messages;
@@ -13,9 +14,9 @@ import org.incendo.cloud.annotations.Permission;
 import org.incendo.cloud.paper.util.sender.Source;
 import org.jspecify.annotations.NullMarked;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Admin command that imports regions from an existing WorldGuard installation. Parsed by the
@@ -23,6 +24,13 @@ import java.util.logging.Level;
  */
 @NullMarked
 public final class MigrationCommands {
+
+    /**
+     * Cap on individually logged failures. A systematic mismatch (every region carrying the same
+     * unreadable flag) would otherwise write one line per region; the count above the list is
+     * always exact.
+     */
+    private static final int MAX_LOGGED_WARNINGS = 100;
 
     private final UWorldGuard plugin;
     private final RegionContainerImpl container;
@@ -53,6 +61,9 @@ public final class MigrationCommands {
         int totalImported = 0;
         int totalConflicts = 0;
         int worldsWithData = 0;
+        int totalGroupQualifiers = 0;
+        final Map<String, Integer> unmappedFlags = new TreeMap<>();
+        final List<String> warnings = new ArrayList<>();
 
         for (final Map.Entry<String, RegionManager> entry : targets.entrySet()) {
             final String world = entry.getKey();
@@ -78,6 +89,11 @@ public final class MigrationCommands {
             }
             totalImported += result.imported();
             totalConflicts += result.conflicts().size();
+            totalGroupQualifiers += result.groupQualifiers();
+            result.unmappedFlags().forEach((name, count) -> unmappedFlags.merge(name, count, Integer::sum));
+            for (final String warning : result.warnings()) {
+                warnings.add("[" + world + "] " + warning);
+            }
 
             String line = "<aqua>" + world + "</aqua>: imported " + result.imported();
             if (result.skipped() > 0) {
@@ -100,6 +116,55 @@ public final class MigrationCommands {
         if (totalConflicts > 0 && !overwrite) {
             note(sender, "<yellow>" + totalConflicts + " region(s) already existed and were left untouched. "
                 + "Re-run with <aqua>--overwrite</aqua> to replace them.");
+        }
+
+        if (!unmappedFlags.isEmpty()) {
+            final StringBuilder sb = new StringBuilder();
+            unmappedFlags.forEach((name, count) -> {
+                if (!sb.isEmpty()) {
+                    sb.append("<gray>, ");
+                }
+                sb.append("<aqua>").append(name).append("</aqua> <dark_gray>×").append(count);
+            });
+            note(sender, "<yellow>" + unmappedFlags.size()
+                + " WorldGuard flag(s) have no uWorldGuard equivalent and were not imported:");
+            note(sender, sb.toString());
+            plugin.getLogger().warning("WorldGuard migration: unmapped flags " + unmappedFlags);
+        }
+
+        if (!warnings.isEmpty()) {
+            note(sender, "<yellow>" + warnings.size() + " item(s) could not be applied. "
+                + "See console for the full list.");
+            final Logger log = plugin.getLogger();
+            log.warning("WorldGuard migration: " + warnings.size() + " item(s) could not be applied:");
+            final int shown = Math.min(warnings.size(), MAX_LOGGED_WARNINGS);
+            for (int i = 0; i < shown; i++) {
+                log.warning("  " + warnings.get(i));
+            }
+            if (warnings.size() > shown) {
+                log.warning("  ... and " + (warnings.size() - shown)
+                    + " more, not listed to keep the log readable.");
+            }
+        }
+
+        if (totalGroupQualifiers > 0) {
+            note(sender, "<yellow>" + totalGroupQualifiers + " per-flag region group(s) "
+                + "(<aqua>&lt;flag&gt;-group</aqua>) could not be read and were dropped, so those flags "
+                + "now apply to everyone in the region.");
+        }
+
+        final List<FlagGroupSupport.Finding> unenforced = new ArrayList<>();
+        for (final Map.Entry<String, RegionManager> entry : targets.entrySet()) {
+            unenforced.addAll(FlagGroupSupport.audit(entry.getKey(), entry.getValue()));
+        }
+        if (!unenforced.isEmpty()) {
+            note(sender, "<yellow>" + unenforced.size() + " imported group qualifier(s) are stored but "
+                + "not yet enforced — those flags currently apply to everyone in the region:");
+            for (final FlagGroupSupport.Finding f : unenforced) {
+                note(sender, "  <aqua>" + f.region() + "</aqua> <dark_gray>/</dark_gray> <aqua>"
+                    + f.flag() + "</aqua> <dark_gray>→ " + f.group().serialized()
+                    + " <gray>(" + f.world() + ")");
+            }
         }
     }
 

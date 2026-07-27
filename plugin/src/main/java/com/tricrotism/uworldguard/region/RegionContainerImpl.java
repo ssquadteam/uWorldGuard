@@ -7,6 +7,7 @@ import org.bukkit.plugin.Plugin;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -58,8 +59,38 @@ public final class RegionContainerImpl implements RegionContainer {
                 manager.addRegion(new GlobalProtectedRegion());
             }
             manager.clearDirty();
+            warnAboutUnenforcedGroups(name, manager);
         });
         return manager;
+    }
+
+    /**
+     * Logs the group qualifiers this world carries that their flag does not yet act on, and the
+     * regions that opt out of build protection via passthrough. Both are cases where the stored
+     * configuration and the enforced behaviour differ, so they are stated at load rather than left
+     * for someone to deduce from a bug report.
+     */
+    private void warnAboutUnenforcedGroups(final String world, final RegionManager manager) {
+        final List<FlagGroupSupport.Finding> findings = FlagGroupSupport.audit(world, manager);
+        if (!findings.isEmpty()) {
+            final StringBuilder sb = new StringBuilder();
+            for (final FlagGroupSupport.Finding f : findings) {
+                if (!sb.isEmpty()) {
+                    sb.append(", ");
+                }
+                sb.append(f.region()).append('/').append(f.flag()).append('=').append(f.group().serialized());
+            }
+            plugin.getLogger().warning("World '" + world + "': " + findings.size()
+                + " flag group qualifier(s) are stored but not yet enforced, so those flags apply to"
+                + " everyone in the region: " + sb);
+        }
+
+        final List<String> passthrough = FlagGroupSupport.passthroughRegions(manager);
+        if (!passthrough.isEmpty()) {
+            plugin.getLogger().info("World '" + world + "': " + passthrough.size()
+                + " region(s) allow passthrough and so do not protect against building: "
+                + String.join(", ", passthrough));
+        }
     }
 
     public void unload(final World world) {

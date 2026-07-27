@@ -13,6 +13,7 @@ public abstract class Flag<T> {
 
     private final String name;
     private @Nullable FlagCategory category;
+    private int index = -1;
 
     protected Flag(final String name) {
         this.name = name;
@@ -20,6 +21,22 @@ public abstract class Flag<T> {
 
     public final String getName() {
         return name;
+    }
+
+    /**
+     * Dense registration index, unique per flag and stable for the JVM's lifetime. Lets callers that
+     * track sets of flags use a bitset keyed on this instead of hashing — see
+     * {@code RegionManager.anyRegionUses}. {@code -1} until registered.
+     */
+    public final int getIndex() {
+        return index;
+    }
+
+    /**
+     * Assigned once at registration.
+     */
+    final void setIndex(final int index) {
+        this.index = index;
     }
 
     /**

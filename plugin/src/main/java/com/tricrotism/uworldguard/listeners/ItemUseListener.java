@@ -1,5 +1,6 @@
 package com.tricrotism.uworldguard.listeners;
 
+import com.tricrotism.uworldguard.config.Bypass;
 import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.region.RegionQuery;
@@ -9,10 +10,7 @@ import org.bukkit.entity.*;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.entity.EntityDamageByEntityEvent;
-import org.bukkit.event.entity.EntityPickupItemEvent;
-import org.bukkit.event.entity.EntityResurrectEvent;
-import org.bukkit.event.entity.ProjectileLaunchEvent;
+import org.bukkit.event.entity.*;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
@@ -28,8 +26,6 @@ import org.jspecify.annotations.NullMarked;
  */
 @NullMarked
 public final class ItemUseListener implements Listener {
-
-    private static final String BYPASS = "uworldguard.bypass";
 
     private final RegionQuery query;
     private final MessageService messages;
@@ -50,11 +46,11 @@ public final class ItemUseListener implements Listener {
         final Player player = event.getPlayer();
         final Material item = event.getItem().getType();
         if (query.getApplicableRegions(player).flagSetContains(Flags.DISABLE_COMPLETELY, item)) {
-            if (player.hasPermission(BYPASS)) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, Flags.DISABLE_COMPLETELY);
         }
     }
 
@@ -71,11 +67,11 @@ public final class ItemUseListener implements Listener {
             return;
         }
         if (query.getApplicableRegions(event.getEntity()).flagSetContains(Flags.DISABLE_COMPLETELY, weapon)) {
-            if (player.hasPermission(BYPASS)) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, Flags.DISABLE_COMPLETELY);
         }
     }
 
@@ -113,34 +109,35 @@ public final class ItemUseListener implements Listener {
             return;
         }
         if (Boolean.TRUE.equals(query.getApplicableRegions(player).queryValue(Flags.DISABLE_THROW))) {
-            if (player.hasPermission(BYPASS)) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, Flags.DISABLE_THROW);
         }
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onWindCharge(final ProjectileLaunchEvent event) {
+    @SuppressWarnings({"deprecation", "removal"})
+    public void onWindChargeKnockback(final EntityKnockbackByEntityEvent event) {
         if (EventGate.disabled(event)) {
             return;
         }
-        if (!(event.getEntity() instanceof AbstractWindCharge windCharge)) {
+        if (!(event.getSourceEntity() instanceof AbstractWindCharge windCharge)) {
             return;
         }
-
-        if (!(windCharge.getShooter() instanceof Player player)) {
+        final Entity victim = event.getEntity();
+        final ProjectileSource shooter = windCharge.getShooter();
+        if (shooter instanceof Entity thrower && thrower.equals(victim)) {
             return;
         }
-
-        if (!query.testState(player, Flags.WIND_CHARGE)) {
-            if (player.hasPermission(BYPASS)) {
-                return;
-            }
-            event.setCancelled(true);
-            messages.send(player, "no-permission");
+        if (query.testState(victim, Flags.WIND_CHARGE)) {
+            return;
         }
+        if (shooter instanceof Player player && Bypass.has(player)) {
+            return;
+        }
+        event.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -152,12 +149,12 @@ public final class ItemUseListener implements Listener {
             return;
         }
         final Player player = event.getPlayer();
-        if (!query.getApplicableRegions(villager).testState(Flags.VILLAGER_TRADE)) {
-            if (player.hasPermission(BYPASS)) {
+        if (!query.getApplicableRegions(villager).testState(Flags.VILLAGER_TRADE, player.getUniqueId())) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, Flags.VILLAGER_TRADE);
         }
     }
 
@@ -169,11 +166,11 @@ public final class ItemUseListener implements Listener {
         final Player player = event.getPlayer();
         final Material item = event.getItemDrop().getItemStack().getType();
         if (query.getApplicableRegions(player).flagSetContains(Flags.DENY_ITEM_DROPS, item)) {
-            if (player.hasPermission(BYPASS)) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, Flags.DENY_ITEM_DROPS);
         }
     }
 
@@ -187,7 +184,7 @@ public final class ItemUseListener implements Listener {
         }
         final Material item = event.getItem().getItemStack().getType();
         if (query.getApplicableRegions(player).flagSetContains(Flags.DENY_ITEM_PICKUP, item)) {
-            if (player.hasPermission(BYPASS)) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);

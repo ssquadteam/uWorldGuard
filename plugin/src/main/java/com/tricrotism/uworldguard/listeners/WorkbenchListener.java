@@ -1,5 +1,6 @@
 package com.tricrotism.uworldguard.listeners;
 
+import com.tricrotism.uworldguard.config.Bypass;
 import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.flags.StateFlag;
@@ -25,8 +26,6 @@ import java.util.Set;
  */
 @NullMarked
 public final class WorkbenchListener implements Listener {
-
-    private static final String BYPASS = "uworldguard.bypass";
 
     private static final Set<Material> WORKBENCHES = EnumSet.of(
         Material.CRAFTING_TABLE, Material.ANVIL, Material.CHIPPED_ANVIL, Material.DAMAGED_ANVIL,
@@ -54,12 +53,12 @@ public final class WorkbenchListener implements Listener {
             return;
         }
         final Player player = event.getPlayer();
-        if (!query.getApplicableRegions(block).testState(Flags.PERMIT_WORKBENCHES)) {
-            if (player.hasPermission(BYPASS)) {
+        if (!query.getApplicableRegions(block).testState(Flags.PERMIT_WORKBENCHES, player.getUniqueId())) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, Flags.PERMIT_WORKBENCHES);
         }
     }
 
@@ -73,12 +72,12 @@ public final class WorkbenchListener implements Listener {
         }
         final StateFlag flag = event.getInventory().getMatrix().length > 4
             ? Flags.PERMIT_WORKBENCHES : Flags.INVENTORY_CRAFT;
-        if (!query.getApplicableRegions(player).testState(flag)) {
-            if (player.hasPermission(BYPASS)) {
+        if (!query.getApplicableRegions(player).testState(flag, player.getUniqueId())) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, flag);
         }
     }
 }

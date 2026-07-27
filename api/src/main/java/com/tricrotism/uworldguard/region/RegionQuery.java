@@ -71,7 +71,25 @@ public final class RegionQuery {
     }
 
     public boolean testState(final Entity entity, final StateFlag flag) {
-        return getApplicableRegions(entity).testState(flag);
+        return getApplicableRegions(entity).testState(flag, entity instanceof Player player ? player.getUniqueId() : null);
+    }
+
+    /**
+     * Test a state flag at a block as it applies to {@code player} — use this over the plain
+     * {@link #testState(Block, StateFlag)} whenever the acting player is known, so a value qualified
+     * to members or non-members resolves against them rather than defaulting to non-member.
+     */
+    public boolean testState(final Block block, final StateFlag flag, final @Nullable Player player) {
+        return getApplicableRegions(block).testState(flag, player == null ? null : player.getUniqueId());
+    }
+
+    /**
+     * Test a state flag at a location as it applies to {@code player}. Prefer the {@link Block}
+     * overload where a block is already in hand — this one exists for events that only expose a
+     * {@link Location}.
+     */
+    public boolean testState(final Location location, final StateFlag flag, final @Nullable Player player) {
+        return getApplicableRegions(location).testState(flag, player == null ? null : player.getUniqueId());
     }
 
     public <T> @Nullable T queryValue(final Location location, final Flag<T> flag) {

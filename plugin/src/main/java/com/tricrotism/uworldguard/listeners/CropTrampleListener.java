@@ -1,5 +1,6 @@
 package com.tricrotism.uworldguard.listeners;
 
+import com.tricrotism.uworldguard.config.Bypass;
 import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.region.RegionQuery;
@@ -21,7 +22,6 @@ import org.jspecify.annotations.NullMarked;
 @NullMarked
 public final class CropTrampleListener implements Listener {
 
-    private static final String BYPASS = "uworldguard.bypass";
 
     private final RegionQuery query;
 
@@ -42,8 +42,8 @@ public final class CropTrampleListener implements Listener {
             return;
         }
         final Player player = event.getPlayer();
-        if (!query.testState(block, Flags.CROP_TRAMPLE)) {
-            if (player.hasPermission(BYPASS)) {
+        if (!query.testState(block, Flags.CROP_TRAMPLE, player)) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);

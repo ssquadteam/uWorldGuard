@@ -32,12 +32,25 @@ public final class Flags {
     public static final StateFlag CHEST_ACCESS = register(FlagCategory.PROTECTION, new StateFlag("chest-access", true));
     public static final StateFlag PVP = register(FlagCategory.PROTECTION, new StateFlag("pvp", true));
     public static final StateFlag DAMAGE_ANIMALS = register(FlagCategory.PROTECTION, new StateFlag("damage-animals", true));
+    public static final StateFlag FALL_DAMAGE = register(FlagCategory.PROTECTION, new StateFlag("fall-damage", true));
     public static final StateFlag RIDE = register(FlagCategory.PROTECTION, new StateFlag("ride", true));
     public static final StateFlag SLEEP = register(FlagCategory.PROTECTION, new StateFlag("sleep", true));
     public static final StateFlag TNT = register(FlagCategory.PROTECTION, new StateFlag("tnt", true));
     public static final StateFlag LIGHTER = register(FlagCategory.PROTECTION, new StateFlag("lighter", true));
     public static final StateFlag END_CRYSTAL_PLACE = register(FlagCategory.PROTECTION, new StateFlag("end-crystal-place", true));
     public static final StateFlag END_CRYSTAL_INTERACT = register(FlagCategory.PROTECTION, new StateFlag("end-crystal-interact", true));
+    public static final StateFlag WORLDEDIT = register(FlagCategory.PROTECTION, new StateFlag("worldedit", true));
+    public static final StateFlag PISTONS = register(FlagCategory.PROTECTION, new StateFlag("pistons", true));
+    /**
+     * When allowed, the region does not take part in build protection at all — matching WorldGuard,
+     * where a passthrough region is skipped entirely when deciding whether someone may build. Used
+     * for regions that exist only to carry a greeting or an effect over an area players build in.
+     */
+    public static final StateFlag PASSTHROUGH = register(FlagCategory.PROTECTION, new StateFlag("passthrough", false));
+    public static final StateFlag ENTITY_ITEM_FRAME_DESTROY =
+        register(FlagCategory.PROTECTION, new StateFlag("entity-item-frame-destroy", true));
+    public static final StateFlag ENTITY_PAINTING_DESTROY =
+        register(FlagCategory.PROTECTION, new StateFlag("entity-painting-destroy", true));
     public static final StateFlag ENTRY = register(FlagCategory.ENTRY, new StateFlag("entry", true));
     public static final StateFlag EXIT = register(FlagCategory.ENTRY, new StateFlag("exit", true));
 
@@ -62,6 +75,8 @@ public final class Flags {
     public static final StateFlag CROP_GROWTH = register(FlagCategory.ENVIRONMENT, new StateFlag("crop-growth", true));
     public static final StateFlag VINE_GROWTH = register(FlagCategory.ENVIRONMENT, new StateFlag("vine-growth", true));
     public static final StateFlag CROP_TRAMPLE = register(FlagCategory.ENVIRONMENT, new StateFlag("crop-trample", true));
+    public static final StateFlag FROSTWALKER = register(FlagCategory.ENVIRONMENT, new StateFlag("frostwalker", true));
+    public static final StateFlag CHUNK_UNLOAD = register(FlagCategory.ENVIRONMENT, new StateFlag("chunk-unload", true));
 
     // Movement & teleport.
     public static final StateFlag ENDERPEARL = register(FlagCategory.MOVEMENT, new StateFlag("enderpearl", true));
@@ -70,6 +85,8 @@ public final class Flags {
     // Messages & effects.
     public static final StringFlag GREETING = register(FlagCategory.MESSAGES, new StringFlag("greeting"));
     public static final StringFlag FAREWELL = register(FlagCategory.MESSAGES, new StringFlag("farewell"));
+    public static final StringFlag CHAT_PREFIX = register(FlagCategory.MESSAGES, new StringFlag("chat-prefix"));
+    public static final StringFlag CHAT_SUFFIX = register(FlagCategory.MESSAGES, new StringFlag("chat-suffix"));
     public static final StringFlag ENTRY_DENY_MESSAGE = register(FlagCategory.MESSAGES, new StringFlag("entry-deny-message"));
     public static final StringFlag EXIT_DENY_MESSAGE = register(FlagCategory.MESSAGES, new StringFlag("exit-deny-message"));
     public static final BooleanFlag INVINCIBLE = register(FlagCategory.PLAYER, new BooleanFlag("invincible"));
@@ -77,6 +94,9 @@ public final class Flags {
     public static final DoubleFlag HEAL_MIN_HEALTH = register(FlagCategory.PLAYER, new DoubleFlag("heal-min-health"));
     public static final DoubleFlag HEAL_MAX_HEALTH = register(FlagCategory.PLAYER, new DoubleFlag("heal-max-health"));
     public static final StringFlag GAME_MODE = register(FlagCategory.PLAYER, new StringFlag("game-mode"));
+    public static final PotionEffectSetFlag GIVE_EFFECTS = register(FlagCategory.PLAYER, new PotionEffectSetFlag("give-effects"));
+    public static final PotionEffectSetFlag BLOCKED_EFFECTS = register(FlagCategory.PLAYER, new PotionEffectSetFlag("blocked-effects"));
+    public static final BooleanFlag HIDE_PLAYERS = register(FlagCategory.PLAYER, new BooleanFlag("hide-players"));
 
     // Item-use control.
     public static final MaterialSetFlag DISABLE_COMPLETELY = register(FlagCategory.ITEMS, new MaterialSetFlag("disable-completely"));
@@ -109,6 +129,12 @@ public final class Flags {
     public static final StringFlag CONSOLE_COMMAND_ON_EXIT = register(FlagCategory.ENTRY, new StringFlag("console-command-on-exit"));
     public static final StringFlag PLAY_SOUNDS = register(FlagCategory.MESSAGES, new StringFlag("play-sounds"));
     public static final StringFlag RESPAWN_LOCATION = register(FlagCategory.ENTRY, new StringFlag("respawn-location"));
+    public static final StringFlag JOIN_LOCATION = register(FlagCategory.ENTRY, new StringFlag("join-location"));
+
+    // Command control. blocked-cmds is a deny-list; allowed-cmds, when set, is an exclusive
+    // allow-list — anything not named is refused.
+    public static final StringSetFlag BLOCKED_CMDS = register(FlagCategory.ITEMS, new StringSetFlag("blocked-cmds"));
+    public static final StringSetFlag ALLOWED_CMDS = register(FlagCategory.ITEMS, new StringSetFlag("allowed-cmds"));
 
     // Continuous player state while inside.
     public static final DoubleFlag WALK_SPEED = register(FlagCategory.PLAYER, new DoubleFlag("walk-speed"));
@@ -119,6 +145,8 @@ public final class Flags {
     // Death / misc toggles.
     public static final BooleanFlag KEEP_INVENTORY = register(FlagCategory.PLAYER, new BooleanFlag("keep-inventory"));
     public static final BooleanFlag KEEP_EXP = register(FlagCategory.PLAYER, new BooleanFlag("keep-exp"));
+    public static final StateFlag MOB_DROPS = register(FlagCategory.MOBS, new StateFlag("mob-drops", true));
+    public static final StateFlag EXP_DROPS = register(FlagCategory.MOBS, new StateFlag("exp-drops", true));
     public static final StateFlag GLIDE = register(FlagCategory.MOVEMENT, new StateFlag("glide", true));
     public static final StateFlag NETHER_PORTALS = register(FlagCategory.MOVEMENT, new StateFlag("nether-portals", true));
     public static final StateFlag ITEM_DURABILITY = register(FlagCategory.ITEMS, new StateFlag("item-durability", true));
@@ -140,8 +168,16 @@ public final class Flags {
             throw new IllegalStateException("A flag named '" + flag.getName() + "' is already registered");
         }
         flag.setCategory(category);
+        flag.setIndex(REGISTRY.size());
         REGISTRY.put(key, flag);
         return flag;
+    }
+
+    /**
+     * How many flags are registered — the upper bound on {@link Flag#getIndex()}, for sizing bitsets.
+     */
+    public static synchronized int count() {
+        return REGISTRY.size();
     }
 
     public static synchronized @Nullable Flag<?> get(final String name) {

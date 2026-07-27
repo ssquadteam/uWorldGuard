@@ -1,5 +1,6 @@
 package com.tricrotism.uworldguard.text;
 
+import com.tricrotism.uworldguard.flags.Flag;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
@@ -18,6 +19,8 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 import java.util.logging.Level;
 
 /**
@@ -33,12 +36,20 @@ import java.util.logging.Level;
 public final class MessageService {
 
     private static final MiniMessage MM = MiniMessage.miniMessage();
+    private static final String DENY_KEY = "no-permission";
+    private static final String DENY_PREFIX = DENY_KEY + "-";
+    private static final Function<UUID, Map<String, AtomicLong>> NEW_MAP = k -> new ConcurrentHashMap<>();
 
     private final Plugin plugin;
     private final File file;
     private final Map<String, String> templates = new ConcurrentHashMap<>();
-    private final Map<UUID, Map<String, Long>> lastSent = new ConcurrentHashMap<>();
+    private final Map<UUID, Map<String, AtomicLong>> lastSent = new ConcurrentHashMap<>();
     private volatile long cooldownMillis;
+    /**
+     * Whether any {@code no-permission-<flag>} entry exists; lets {@link #sendDeny} skip building
+     * a per-flag key when nobody has configured one.
+     */
+    private volatile boolean denyOverrides;
     private final boolean placeholderApi;
 
     public MessageService(final Plugin plugin) {
@@ -56,11 +67,14 @@ public final class MessageService {
         this.cooldownMillis = Math.max(0L, cfg.getLong("cooldown-seconds", 3L)) * 1000L;
         templates.clear();
         final ConfigurationSection section = cfg.getConfigurationSection("messages");
+        boolean overrides = false;
         if (section != null) {
             for (final String key : section.getKeys(false)) {
                 templates.put(key, section.getString(key, ""));
+                overrides |= key.startsWith(DENY_PREFIX);
             }
         }
+        this.denyOverrides = overrides;
     }
 
     /**
@@ -89,6 +103,9 @@ public final class MessageService {
 
     public void setMessage(final String key, final String value) {
         templates.put(key, value);
+        if (key.startsWith(DENY_PREFIX)) {
+            this.denyOverrides = true;
+        }
         save();
     }
 
@@ -110,6 +127,10 @@ public final class MessageService {
      * plugin is present. No cooldown — for greetings/farewells that should always show.
      */
     public Component render(final String template, final @Nullable Player player, final TagResolver... resolvers) {
+        if (resolvers.length == 0
+            && (player == null || !placeholderApi || template.indexOf('%') < 0)) {
+            return Messages.format(template);
+        }
         final String text = placeholderApi && player != null ? PlaceholderSupport.expand(player, template) : template;
         return MM.deserialize(text, resolvers);
     }
@@ -120,6 +141,28 @@ public final class MessageService {
      */
     public void send(final Player player, final String key, final TagResolver... resolvers) {
         dispatch(player, key, templates.get(key), resolvers);
+    }
+
+    /**
+     * Send the denial message for {@code flag}: the per-flag override {@code no-permission-<flag>}
+     * when messages.yml defines one, else the shared {@code no-permission} entry. The two levels
+     * disable independently — a per-flag entry of {@code false} silences just that flag while the
+     * shared message keeps working elsewhere, and disabling {@code no-permission} silences every
+     * flag that has no override of its own.
+     *
+     * <p>Cooldown is keyed on whichever entry is used, so overriding a flag also gives it its own
+     * throttle instead of sharing one with every other denial.
+     */
+    public void sendDeny(final Player player, final Flag<?> flag) {
+        if (denyOverrides) {
+            final String key = DENY_PREFIX + flag.getName();
+            final String override = templates.get(key);
+            if (override != null) {
+                dispatch(player, key, override);
+                return;
+            }
+        }
+        dispatch(player, DENY_KEY, templates.get(DENY_KEY));
     }
 
     /**
@@ -148,12 +191,16 @@ public final class MessageService {
             return false;
         }
         final long now = System.currentTimeMillis();
-        final Map<String, Long> perPlayer = lastSent.computeIfAbsent(uuid, k -> new ConcurrentHashMap<>());
-        final Long prev = perPlayer.get(key);
-        if (prev != null && now - prev < cooldownMillis) {
+        final Map<String, AtomicLong> perPlayer = lastSent.computeIfAbsent(uuid, NEW_MAP);
+        final AtomicLong slot = perPlayer.get(key);
+        if (slot == null) {
+            perPlayer.putIfAbsent(key, new AtomicLong(now));
+            return false;
+        }
+        if (now - slot.get() < cooldownMillis) {
             return true;
         }
-        perPlayer.put(key, now);
+        slot.set(now);
         return false;
     }
 

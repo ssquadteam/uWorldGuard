@@ -1,6 +1,6 @@
 [versions]
-paper-api = "26.1.2.build.+"
-minecraft = "26.1.2"
+paper-api = "26.2.build.+"
+minecraft = "26.2"
 
 paperweight-userdev = "2.0.0-beta.21"
 run-task = "3.0.2"
@@ -11,7 +11,7 @@ cloud-annotations = "2.0.0"
 packetevents = "2.7.0"
 worldedit = "7.3.8"
 placeholderapi = "2.11.6"
-invui = "2.1.0"
+invui = "2.2.0"
 caffeine = "3.1.8"
 bstats = "3.2.1"
 

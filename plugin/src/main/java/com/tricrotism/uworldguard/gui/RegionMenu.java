@@ -8,6 +8,7 @@ import com.tricrotism.uworldguard.selection.Selection;
 import com.tricrotism.uworldguard.selection.SelectionService;
 import com.tricrotism.uworldguard.text.Messages;
 import com.tricrotism.uworldguard.util.BlockVector3;
+import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -98,8 +99,11 @@ public final class RegionMenu {
                 MM.deserialize("<!i><gray>Priority: <white>" + region.getPriority()),
                 MM.deserialize("<!i><gray>Owners: <white>" + region.getOwners().size()
                     + " <gray>Members: <white>" + region.getMembers().size()),
-                Messages.format("<!i><dark_gray>Left: flags  Right: teleport"),
-                Messages.format("<!i><dark_gray>Shift-Left: members  Shift-Right: delete"));
+                Component.empty(),
+                Messages.format("<!i><dark_gray>Left-click <gray>edit flags"),
+                Messages.format("<!i><dark_gray>Right-click <gray>teleport here"),
+                Messages.format("<!i><dark_gray>Shift + left <gray>owners & members"),
+                Messages.format("<!i><dark_gray>Shift + right <red>delete this region"));
     }
 
     private static Material materialFor(final RegionType type) {

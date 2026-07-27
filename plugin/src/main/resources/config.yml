@@ -17,6 +17,30 @@ selection:
     # When WorldEdit is present, its selection is used instead and this is ignored.
     wand-item: WOODEN_AXE
 
+# How player region entry/exit is detected. PlayerMoveEvent is the highest-frequency event a region
+# plugin touches — it fires many times per second per player — so this lets you trade exactness for
+# throughput on busy servers.
+movement:
+    #   EVENT - handle PlayerMoveEvent. Exact: a denied entry/exit is cancelled before the player
+    #           moves, and greeting/farewell fire the instant the border is crossed. Work scales with
+    #           how much your players move.
+    #   TASK  - poll every `task-interval-ticks` instead. Work scales with player count and the
+    #           interval, not with movement, so it is cheaper and far more predictable under load.
+    #           Trade-offs: a denied crossing cannot be cancelled, so the player is teleported back
+    #           after the fact (a brief rubber-band); entry/exit effects can lag by up to one
+    #           interval; and a player who crosses a region and returns within one interval is never
+    #           seen entering it at all.
+    #           TASK mode also sweeps for containment about once a second: anyone found standing in
+    #           a region that refuses them is moved out, even if they never moved. That catches
+    #           logging in inside a no-entry region, and a region being created or its entry flag
+    #           changed around someone already stood there — neither of which is a crossing, so
+    #           neither mode would otherwise notice. Players are sent to the last spot they were
+    #           accepted at, or world spawn if there isn't one.
+    mode: EVENT
+    # Only used when mode is TASK. Lower is more responsive, higher is cheaper. 4 ticks (0.2s) is a
+    # reasonable balance; 1 is effectively per-tick and gives up most of the saving.
+    task-interval-ticks: 4
+
 # Per-world event handling. By default uWorldGuard acts on every event in every world. Use this to
 # make it skip specific Bukkit events in a given world — handy when another plugin owns those
 # interactions there, or for creative/minigame worlds. Events are matched by their Bukkit class

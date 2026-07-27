@@ -65,6 +65,23 @@ public final class CollisionService {
         }
     }
 
+    /**
+     * Empties the team on disable. The main scoreboard outlives the plugin, so without this every
+     * player who was inside a no-collision region stays in {@code uwg_nocollision} — still collision-
+     * free after uWorldGuard is gone, with nothing left to explain why.
+     */
+    public void shutdown() {
+        final Team resolved = team;
+        if (resolved == null) {
+            disabled.clear();
+            return;
+        }
+        for (final String entry : Set.copyOf(resolved.getEntries())) {
+            resolved.removeEntry(entry);
+        }
+        disabled.clear();
+    }
+
     private @Nullable Team team() {
         Team resolved = team;
         if (resolved != null) {

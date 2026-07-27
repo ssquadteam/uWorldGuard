@@ -4,7 +4,7 @@ version: '${version}'
 
 main: com.tricrotism.uworldguard.UWorldGuard
 loader: com.tricrotism.uworldguard.UWorldGuardLoader
-api-version: '26.1.2'
+api-version: '26.2'
 load: STARTUP
 
 dependencies:
@@ -18,6 +18,10 @@ dependencies:
             required: false
             join-classpath: true
         PlaceholderAPI:
+            load: BEFORE
+            required: false
+            join-classpath: true
+        GSit:
             load: BEFORE
             required: false
             join-classpath: true

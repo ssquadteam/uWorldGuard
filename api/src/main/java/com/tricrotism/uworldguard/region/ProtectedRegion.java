@@ -3,6 +3,7 @@ package com.tricrotism.uworldguard.region;
 import com.tricrotism.uworldguard.domain.Association;
 import com.tricrotism.uworldguard.domain.DefaultDomain;
 import com.tricrotism.uworldguard.flags.Flag;
+import com.tricrotism.uworldguard.flags.RegionGroup;
 import com.tricrotism.uworldguard.util.BlockVector3;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
@@ -28,6 +29,8 @@ public abstract class ProtectedRegion {
     private final DefaultDomain members = new DefaultDomain();
     private final Map<Flag<?>, Object> flags = new ConcurrentHashMap<>();
     private final Map<Flag<?>, Object> flagsView = Collections.unmodifiableMap(flags);
+    private final Map<Flag<?>, RegionGroup> flagGroups = new ConcurrentHashMap<>();
+    private final Map<Flag<?>, RegionGroup> flagGroupsView = Collections.unmodifiableMap(flagGroups);
 
     private volatile int priority;
     private volatile @Nullable ProtectedRegion parent;
@@ -159,5 +162,42 @@ public abstract class ProtectedRegion {
      */
     public final Map<Flag<?>, Object> getFlags() {
         return flagsView;
+    }
+
+    /**
+     * Which players a flag's value applies to on this region, inheriting from the parent chain
+     * alongside the value itself. {@link RegionGroup#ALL} when unqualified.
+     */
+    public final RegionGroup getFlagGroup(final Flag<?> flag) {
+        for (@Nullable ProtectedRegion r = this; r != null; r = r.parent) {
+            if (!r.flagGroups.isEmpty()) {
+                final RegionGroup group = r.flagGroups.get(flag);
+                if (group != null) {
+                    return group;
+                }
+            }
+            if (r.flags.containsKey(flag)) {
+                return RegionGroup.ALL;
+            }
+        }
+        return RegionGroup.ALL;
+    }
+
+    /**
+     * Restrict a flag to a subset of players. {@code null} or {@link RegionGroup#ALL} clears it.
+     */
+    public final void setFlagGroup(final Flag<?> flag, final @Nullable RegionGroup group) {
+        if (group == null || group == RegionGroup.ALL) {
+            flagGroups.remove(flag);
+        } else {
+            flagGroups.put(flag, group);
+        }
+    }
+
+    /**
+     * Live, unmodifiable view of the group qualifiers set directly on this region — for storage.
+     */
+    public final Map<Flag<?>, RegionGroup> getFlagGroups() {
+        return flagGroupsView;
     }
 }

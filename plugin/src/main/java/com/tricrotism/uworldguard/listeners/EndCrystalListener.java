@@ -1,5 +1,6 @@
 package com.tricrotism.uworldguard.listeners;
 
+import com.tricrotism.uworldguard.config.Bypass;
 import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.region.RegionQuery;
@@ -24,8 +25,6 @@ import org.jspecify.annotations.Nullable;
 @NullMarked
 public final class EndCrystalListener implements Listener {
 
-    private static final String BYPASS = "uworldguard.bypass";
-
     private final RegionQuery query;
     private final MessageService messages;
 
@@ -46,12 +45,12 @@ public final class EndCrystalListener implements Listener {
         if (player == null) {
             return;
         }
-        if (!query.testState(crystal, Flags.END_CRYSTAL_PLACE)) {
-            if (player.hasPermission(BYPASS)) {
+        if (!query.getApplicableRegions(crystal).testState(Flags.END_CRYSTAL_PLACE, player.getUniqueId())) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, Flags.END_CRYSTAL_PLACE);
         }
     }
 
@@ -67,12 +66,12 @@ public final class EndCrystalListener implements Listener {
         if (player == null) {
             return;
         }
-        if (!query.testState(crystal, Flags.END_CRYSTAL_INTERACT)) {
-            if (player.hasPermission(BYPASS)) {
+        if (!query.getApplicableRegions(crystal).testState(Flags.END_CRYSTAL_INTERACT, player.getUniqueId())) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, Flags.END_CRYSTAL_INTERACT);
         }
     }
 

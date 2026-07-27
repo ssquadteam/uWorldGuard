@@ -1,9 +1,6 @@
 package com.tricrotism.uworldguard.region;
 
-import com.tricrotism.uworldguard.flags.Flag;
-import com.tricrotism.uworldguard.flags.Flags;
-import com.tricrotism.uworldguard.flags.State;
-import com.tricrotism.uworldguard.flags.StateFlag;
+import com.tricrotism.uworldguard.flags.*;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
@@ -19,16 +16,52 @@ import java.util.*;
 @NullMarked
 public final class ApplicableRegionSet {
 
-    private final List<ProtectedRegion> applicable; // sorted by priority descending
+    private static final Comparator<ProtectedRegion> PRIORITY_DESC =
+        Comparator.comparingInt(ProtectedRegion::getPriority).reversed();
+
+    // sorted by priority descending, never mutated
+    private final List<ProtectedRegion> applicable;
+    // lazy unmodifiable wrapper, see getRegions()
+    private @Nullable List<ProtectedRegion> view;
     private final @Nullable ProtectedRegion global;
+    private final @Nullable RegionManager owner;
+    /**
+     * Snapshot of whether this world uses group qualifiers, so resolution reads a field not a map.
+     */
+    private final boolean groupsInUse;
 
     public ApplicableRegionSet(final List<ProtectedRegion> applicable, final @Nullable ProtectedRegion global) {
-        final List<ProtectedRegion> copy = new ArrayList<>(applicable);
-        if (copy.size() > 1) {
-            copy.sort(Comparator.comparingInt(ProtectedRegion::getPriority).reversed());
+        this(new ArrayList<>(applicable), global, null);
+    }
+
+    /**
+     * Takes ownership of {@code applicable}: it is sorted in place and wrapped, never copied, so the
+     * caller must not retain or mutate it afterwards. The manager builds a fresh list per query and
+     * drops it immediately, so this removes a copy from the hottest path in the plugin. {@code owner}
+     * is the manager the set came from, used to answer {@link #worldUses}.
+     */
+    ApplicableRegionSet(
+        final List<ProtectedRegion> applicable, final @Nullable ProtectedRegion global,
+        final @Nullable RegionManager owner
+    ) {
+        if (applicable.size() > 1) {
+            applicable.sort(PRIORITY_DESC);
         }
-        this.applicable = Collections.unmodifiableList(copy);
+        this.applicable = applicable;
         this.global = global;
+        this.owner = owner;
+        this.groupsInUse = owner == null || owner.anyFlagGroups();
+    }
+
+    /**
+     * Whether any region in the world this set came from sets {@code flag} at all — a bitset test, far
+     * cheaper than {@link #queryValue}. Use it to skip resolving flags nobody on the server uses;
+     * a {@code false} here guarantees {@code queryValue} would return {@code null}, because the global
+     * region and every parent are themselves regions in that world's manager. Conservatively
+     * {@code false} for a set not built by a manager.
+     */
+    public boolean worldUses(final Flag<?> flag) {
+        return owner != null && owner.anyRegionUses(flag);
     }
 
     public boolean isEmpty() {
@@ -36,10 +69,35 @@ public final class ApplicableRegionSet {
     }
 
     /**
+     * How many regions apply here. Paired with {@link #get(int)} this walks the set without touching
+     * {@link #getRegions()}, which would build an unmodifiable wrapper — worth avoiding on paths that
+     * run per movement.
+     */
+    public int size() {
+        return applicable.size();
+    }
+
+    /**
+     * The region at {@code index}, highest priority first.
+     */
+    public ProtectedRegion get(final int index) {
+        return applicable.get(index);
+    }
+
+    /**
      * The applicable regions, highest priority first. Unmodifiable.
+     *
+     * <p>The wrapper is built on first use rather than at construction: flag resolution reads the
+     * backing list directly, so the many queries that only test a flag never allocate one. Two threads
+     * racing here simply build identical wrappers over the same immutable list, which is harmless.
      */
     public List<ProtectedRegion> getRegions() {
-        return applicable;
+        List<ProtectedRegion> cached = view;
+        if (cached == null) {
+            cached = Collections.unmodifiableList(applicable);
+            view = cached;
+        }
+        return cached;
     }
 
     /**
@@ -50,15 +108,48 @@ public final class ApplicableRegionSet {
     }
 
     /**
-     * Resolve a state flag without any membership consideration.
+     * Resolve a state flag for an actor that is not a player (or whose identity does not matter).
+     * Group-qualified values are evaluated as WorldGuard does for non-players: as a non-member.
      */
     public State queryState(final StateFlag flag) {
-        final State resolved = resolveState(flag);
+        return queryState(flag, null);
+    }
+
+    /**
+     * Resolve a state flag as it applies to {@code subject}. A value restricted to a
+     * {@link RegionGroup} the subject is not in is skipped, so {@code pvp: deny} qualified to
+     * non-members leaves members alone.
+     */
+    public State queryState(final StateFlag flag, final @Nullable UUID subject) {
+        final State resolved = resolveState(flag, subject);
         return resolved != null ? resolved : flag.getDefault();
     }
 
     public boolean testState(final StateFlag flag) {
-        return queryState(flag) == State.ALLOW;
+        return queryState(flag, null) == State.ALLOW;
+    }
+
+    public boolean testState(final StateFlag flag, final @Nullable UUID subject) {
+        return queryState(flag, subject) == State.ALLOW;
+    }
+
+    /**
+     * Whether {@code region}'s value for {@code flag} applies to {@code subject}.
+     */
+    private boolean appliesTo(
+        final ProtectedRegion region, final Flag<?> flag, final @Nullable UUID subject
+    ) {
+        // One volatile read rules out the whole check for the overwhelmingly common case of a world
+        // with no group qualifiers anywhere, keeping flag resolution exactly as cheap as before
+        // qualifiers existed.
+        if (!groupsInUse) {
+            return true;
+        }
+        final RegionGroup group = region.getFlagGroup(flag);
+        if (group == RegionGroup.ALL) {
+            return true;
+        }
+        return group.contains(subject == null ? null : region.getAssociation(subject));
     }
 
     /**
@@ -67,12 +158,21 @@ public final class ApplicableRegionSet {
      * region means protected (deny).
      */
     public boolean canBuild(final @Nullable UUID subject) {
-        if (applicable.isEmpty()) {
+        ProtectedRegion top = null;
+        for (int i = 0, n = applicable.size(); i < n; i++) {
+            final ProtectedRegion region = applicable.get(i);
+            if (region.getFlag(Flags.PASSTHROUGH) != State.ALLOW) {
+                top = region;
+                break;
+            }
+        }
+
+        if (top == null) {
             final State g = global != null ? global.getFlag(Flags.BUILD) : null;
             return g != State.DENY;
         }
 
-        final int topPriority = applicable.getFirst().getPriority();
+        final int topPriority = top.getPriority();
         State explicit = null;
         boolean memberOfTop = false;
         for (int i = 0, n = applicable.size(); i < n; i++) {
@@ -80,7 +180,10 @@ public final class ApplicableRegionSet {
             if (region.getPriority() != topPriority) {
                 break;
             }
-            final State v = region.getFlag(Flags.BUILD);
+            if (region.getFlag(Flags.PASSTHROUGH) == State.ALLOW) {
+                continue;
+            }
+            final State v = appliesTo(region, Flags.BUILD, subject) ? region.getFlag(Flags.BUILD) : null;
             if (v != null) {
                 explicit = explicit == State.DENY ? State.DENY : v;
             }
@@ -123,7 +226,7 @@ public final class ApplicableRegionSet {
         return global != null ? global.getFlag(flag) : null;
     }
 
-    private @Nullable State resolveState(final StateFlag flag) {
+    private @Nullable State resolveState(final StateFlag flag, final @Nullable UUID subject) {
         boolean found = false;
         int bestPriority = 0;
         State result = null;
@@ -132,7 +235,7 @@ public final class ApplicableRegionSet {
             if (found && region.getPriority() < bestPriority) {
                 break;
             }
-            final State v = region.getFlag(flag);
+            final State v = appliesTo(region, flag, subject) ? region.getFlag(flag) : null;
             if (v != null) {
                 if (!found) {
                     found = true;
@@ -146,6 +249,9 @@ public final class ApplicableRegionSet {
         if (found) {
             return result;
         }
-        return global != null ? global.getFlag(flag) : null;
+        if (global == null || !appliesTo(global, flag, subject)) {
+            return null;
+        }
+        return global.getFlag(flag);
     }
 }

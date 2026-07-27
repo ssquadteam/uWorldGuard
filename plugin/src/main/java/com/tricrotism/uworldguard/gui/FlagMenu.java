@@ -4,6 +4,7 @@ import com.tricrotism.uworldguard.flags.*;
 import com.tricrotism.uworldguard.region.ProtectedRegion;
 import com.tricrotism.uworldguard.region.RegionManager;
 import com.tricrotism.uworldguard.text.Messages;
+import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
@@ -20,11 +21,15 @@ import xyz.xenondevs.invui.window.Window;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Predicate;
 
 /**
- * InvUI paged editor for a region's flags. State and boolean flags cycle on left-click; typed flags
- * (string, number, item-set) prompt for a chat value; right-click clears any flag. Region writes go
- * through the thread-safe {@code setFlag}, and each item refreshes itself via {@code notifyWindows}.
+ * InvUI editor for a region's flags. Opens on a category landing page so the full flag set is never
+ * shown at once: pick a category to edit just its flags, "Active" to edit only the flags currently
+ * set, or "Search" to find a flag by name across every category. Within a list, state and boolean
+ * flags cycle on left-click; typed flags prompt for a chat value; right-click clears any flag. Region
+ * writes go through the thread-safe {@code setFlag}, and each item refreshes itself via {@code
+ * notifyWindows}.
  */
 @NullMarked
 public final class FlagMenu {
@@ -34,9 +39,6 @@ public final class FlagMenu {
     private final RegionManager manager;
     private final ProtectedRegion region;
     private final ChatInputService chatInput;
-    private @Nullable PagedGui<Item> gui;
-    private @Nullable String search;
-    private @Nullable FlagCategory categoryFilter;
 
     public FlagMenu(
         final RegionManager manager, final ProtectedRegion region, final ChatInputService chatInput
@@ -47,41 +49,110 @@ public final class FlagMenu {
     }
 
     public void open(final Player player) {
-        final PagedGui<Item> built = PagedGui.itemsBuilder()
+        openLanding(player);
+    }
+
+    private void openLanding(final Player player) {
+        final PagedGui<Item> gui = PagedGui.itemsBuilder()
             .setStructure(
                 "x x x x x x x x x",
                 "x x x x x x x x x",
                 "x x x x x x x x x",
                 "x x x x x x x x x",
                 "x x x x x x x x x",
-                "< . F . C . S . >")
+                "A . R . . . . . C")
+            .addIngredient('x', Markers.CONTENT_LIST_SLOT_HORIZONTAL)
+            .addIngredient('A', activeButton())
+            .addIngredient('R', searchButton())
+            .addIngredient('C', MenuItems.close())
+            .setContent(categoryButtons())
+            .build();
+        window(player, "<dark_gray>Flags: <aqua>" + region.getId(), gui);
+    }
+
+    private List<Item> categoryButtons() {
+        final FlagCategory[] categories = FlagCategory.values();
+        final List<Item> items = new ArrayList<>(categories.length);
+        for (final FlagCategory category : categories) {
+            items.add(Item.builder()
+                .setItemProvider(_ -> new ItemBuilder(iconFor(category))
+                    .setName(MM.deserialize("<!i><yellow>" + category.getDisplayName()))
+                    .addLoreLines(
+                        MM.deserialize("<!i><gray><white>" + countIn(category) + "</white> flags"),
+                        Messages.format("<!i><dark_gray>Click to view")))
+                .addClickHandler((item, click) -> openList(click.player(),
+                    "<dark_gray>" + category.getDisplayName(), flag -> flag.getCategory() == category))
+                .build());
+        }
+        return items;
+    }
+
+    private Item activeButton() {
+        return Item.builder()
+            .setItemProvider(_ -> new ItemBuilder(Material.NETHER_STAR)
+                .setName(Messages.format("<!i><yellow>Active flags"))
+                .addLoreLines(
+                    MM.deserialize("<!i><gray><white>" + region.getFlags().size() + "</white> set on this region"),
+                    Messages.format("<!i><dark_gray>Click to view only the flags you've set")))
+            .addClickHandler((item, click) -> openList(click.player(), "<dark_gray>Active flags",
+                flag -> region.getFlags().get(flag) != null))
+            .build();
+    }
+
+    private Item searchButton() {
+        return Item.builder()
+            .setItemProvider(_ -> new ItemBuilder(Material.OAK_SIGN)
+                .setName(Messages.format("<!i><yellow>Search"))
+                .addLoreLines(
+                    Messages.format("<!i><gray>Find a flag by name across all categories"),
+                    Messages.format("<!i><dark_gray>Click, then type a query")))
+            .addClickHandler((item, click) -> promptSearch(click.player()))
+            .build();
+    }
+
+    private void promptSearch(final Player player) {
+        player.closeInventory();
+        player.sendMessage(Messages.format("<gray>Type a search query in chat, or <red>cancel</red>."));
+        chatInput.await(player.getUniqueId(), raw -> {
+            final String query = raw.trim().toLowerCase(Locale.ROOT);
+            if (query.isEmpty()) {
+                openLanding(player);
+            } else {
+                openList(player, "<dark_gray>Search: <aqua>" + query, flag -> flag.getName().contains(query));
+            }
+        });
+    }
+
+    private void openList(final Player player, final String title, final Predicate<Flag<?>> filter) {
+        final PagedGui<Item> gui = PagedGui.itemsBuilder()
+            .setStructure(
+                "x x x x x x x x x",
+                "x x x x x x x x x",
+                "x x x x x x x x x",
+                "x x x x x x x x x",
+                "x x x x x x x x x",
+                "< B . . C . . . >")
             .addIngredient('x', Markers.CONTENT_LIST_SLOT_HORIZONTAL)
             .addIngredient('<', new PageButtons.Previous())
             .addIngredient('>', new PageButtons.Next())
+            .addIngredient('B', backButton())
             .addIngredient('C', MenuItems.close())
-            .addIngredient('F', categoryItem())
-            .addIngredient('S', searchItem())
-            .setContent(buildItems())
+            .setContent(flagItems(filter))
             .build();
-        this.gui = built;
-
-        Window.builder()
-            .setViewer(player)
-            .setTitle(MM.deserialize("<dark_gray>Flags: <aqua>" + region.getId()))
-            .setUpperGui(built)
-            .build()
-            .open();
+        window(player, title, gui);
     }
 
-    private List<Item> buildItems() {
-        final String query = search;
-        final FlagCategory category = categoryFilter;
-        final List<Item> items = new ArrayList<>(Flags.all().size());
+    private Item backButton() {
+        return Item.builder()
+            .setItemProvider(new ItemBuilder(Material.OAK_DOOR).setName(Messages.format("<!i><yellow>Back")))
+            .addClickHandler((_, click) -> openLanding(click.player()))
+            .build();
+    }
+
+    private List<Item> flagItems(final Predicate<Flag<?>> filter) {
+        final List<Item> items = new ArrayList<>();
         for (final Flag<?> flag : Flags.all()) {
-            if (category != null && flag.getCategory() != category) {
-                continue;
-            }
-            if (query != null && !flag.getName().contains(query)) {
+            if (!filter.test(flag)) {
                 continue;
             }
             items.add(Item.builder()
@@ -92,77 +163,70 @@ public final class FlagMenu {
         return items;
     }
 
-    private Item categoryItem() {
-        return Item.builder()
-            .setItemProvider(_ -> new ItemBuilder(Material.BOOKSHELF)
-                .setName(Messages.format("<!i><yellow>Category"))
-                .addLoreLines(
-                    MM.deserialize("<!i><gray>Showing: <white>"
-                        + (categoryFilter == null ? "All" : categoryFilter.getDisplayName())),
-                    Messages.format("<!i><dark_gray>Left-click: next"),
-                    Messages.format("<!i><dark_gray>Right-click: all")))
-            .addClickHandler((item, click) -> {
-                categoryFilter = click.clickType().isRightClick() ? null : nextCategory(categoryFilter);
-                refresh();
-                item.notifyWindows();
-            })
-            .build();
-    }
-
-    private Item searchItem() {
-        return Item.builder()
-            .setItemProvider(_ -> new ItemBuilder(Material.OAK_SIGN)
-                .setName(Messages.format("<!i><yellow>Search"))
-                .addLoreLines(
-                    MM.deserialize("<!i><gray>Query: <white>" + (search == null ? "none" : search)),
-                    Messages.format("<!i><dark_gray>Left-click: set query (chat)"),
-                    Messages.format("<!i><dark_gray>Right-click: clear")))
-            .addClickHandler((item, click) -> {
-                if (click.clickType().isRightClick()) {
-                    search = null;
-                    refresh();
-                    item.notifyWindows();
-                } else {
-                    promptSearch(click.player());
-                }
-            })
-            .build();
-    }
-
-    private void promptSearch(final Player player) {
-        player.closeInventory();
-        player.sendMessage(Messages.format("<gray>Type a search query in chat, or <red>cancel</red>."));
-        chatInput.await(player.getUniqueId(), query -> {
-            final String trimmed = query.trim().toLowerCase(Locale.ROOT);
-            search = trimmed.isEmpty() ? null : trimmed;
-            open(player);
-        });
-    }
-
-    private void refresh() {
-        if (gui != null) {
-            gui.setContent(buildItems());
-        }
-    }
-
-    private static @Nullable FlagCategory nextCategory(final @Nullable FlagCategory current) {
-        final FlagCategory[] values = FlagCategory.values();
-        if (current == null) {
-            return values[0];
-        }
-        final int next = current.ordinal() + 1;
-        return next < values.length ? values[next] : null;
+    private void window(final Player player, final String title, final PagedGui<Item> gui) {
+        Window.builder()
+            .setViewer(player)
+            .setTitle(MM.deserialize(title))
+            .setUpperGui(gui)
+            .build()
+            .open();
     }
 
     private ItemProvider provider(final Flag<?> flag) {
         final Object value = region.getFlags().get(flag);
         final boolean toggle = flag instanceof StateFlag || flag instanceof BooleanFlag;
+        final RegionGroup group = region.getFlagGroup(flag);
         return new ItemBuilder(materialFor(value))
             .setName(MM.deserialize("<!i><yellow>" + flag.getName()))
             .addLoreLines(
-                MM.deserialize("<!i><gray>Value: <white>" + (value == null ? "unset" : String.valueOf(value))),
-                Messages.format(toggle ? "<!i><dark_gray>Left-click: cycle" : "<!i><dark_gray>Left-click: set value (chat)"),
-                Messages.format("<!i><dark_gray>Right-click: clear"));
+                MM.deserialize("<!i><gray>Now: " + valueText(value)),
+                group == RegionGroup.ALL
+                    ? MM.deserialize("<!i><gray>Accepts: <white>" + typeHint(flag))
+                    : MM.deserialize("<!i><gray>Applies to: <gold>" + group.serialized()),
+                Component.empty(),
+                Messages.format(toggle
+                    ? "<!i><dark_gray>Left-click <gray>cycle allow / deny / unset"
+                    : "<!i><dark_gray>Left-click <gray>type a new value in chat"),
+                Messages.format("<!i><dark_gray>Right-click <gray>clear back to default"));
+    }
+
+    /**
+     * The current value, coloured by meaning so a wall of flags reads at a glance: green permits,
+     * red denies, grey is untouched and follows the server default.
+     */
+    private static String valueText(final @Nullable Object value) {
+        if (value == null) {
+            return "<dark_gray><i>not set (uses default)</i>";
+        }
+        if (value == State.ALLOW || Boolean.TRUE.equals(value)) {
+            return "<green>" + value;
+        }
+        if (value == State.DENY || Boolean.FALSE.equals(value)) {
+            return "<red>" + value;
+        }
+        return "<white>" + value;
+    }
+
+    private static String typeHint(final Flag<?> flag) {
+        if (flag instanceof StateFlag) {
+            return "allow / deny";
+        }
+        if (flag instanceof BooleanFlag) {
+            return "true / false";
+        }
+        if (flag instanceof IntegerFlag || flag instanceof DoubleFlag) {
+            return "a number";
+        }
+        if (flag instanceof MaterialSetFlag) {
+            return "item list, e.g. DIAMOND_SWORD, BOW";
+        }
+        if (flag instanceof PotionEffectSetFlag) {
+            return "effects, e.g. SPEED:1, JUMP";
+        }
+        if (flag instanceof StringSetFlag) {
+            return "commands, e.g. home, tp";
+        }
+        return "text";
     }
 
     private static Material materialFor(final @Nullable Object value) {
@@ -228,5 +292,28 @@ public final class FlagMenu {
         }
         region.setFlag(flag, parsed);
         return true;
+    }
+
+    private static int countIn(final FlagCategory category) {
+        int count = 0;
+        for (final Flag<?> flag : Flags.all()) {
+            if (flag.getCategory() == category) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static Material iconFor(final FlagCategory category) {
+        return switch (category) {
+            case PROTECTION -> Material.SHIELD;
+            case ENVIRONMENT -> Material.OAK_SAPLING;
+            case MOBS -> Material.ZOMBIE_HEAD;
+            case MOVEMENT -> Material.LEATHER_BOOTS;
+            case MESSAGES -> Material.WRITABLE_BOOK;
+            case ITEMS -> Material.CHEST;
+            case ENTRY -> Material.IRON_DOOR;
+            case PLAYER -> Material.PLAYER_HEAD;
+        };
     }
 }

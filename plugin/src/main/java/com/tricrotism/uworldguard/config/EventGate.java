@@ -108,6 +108,20 @@ public final class EventGate {
         return filter != null && filter.disabled(EVENT_NAMES.get(event.getClass()));
     }
 
+    /**
+     * Same gate, consulted by name for work that replaces an event rather than handling one — the
+     * polled movement mode stands in for {@code PlayerMoveEvent}, so a world that disables that event
+     * keeps disabling it whichever mode is active.
+     */
+    public static boolean disabled(final World world, final String eventName) {
+        final Map<String, WorldFilter> map = byWorld;
+        if (map.isEmpty()) {
+            return false;
+        }
+        final WorldFilter filter = map.get(world.getName());
+        return filter != null && filter.disabled(eventName);
+    }
+
     private static @Nullable World worldOf(final Event event) {
         if (event instanceof PlayerEvent e) {
             return e.getPlayer().getWorld();

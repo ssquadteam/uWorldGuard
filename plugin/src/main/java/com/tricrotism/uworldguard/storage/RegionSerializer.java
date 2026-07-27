@@ -3,6 +3,7 @@ package com.tricrotism.uworldguard.storage;
 import com.tricrotism.uworldguard.domain.DefaultDomain;
 import com.tricrotism.uworldguard.flags.Flag;
 import com.tricrotism.uworldguard.flags.Flags;
+import com.tricrotism.uworldguard.flags.RegionGroup;
 import com.tricrotism.uworldguard.region.*;
 import com.tricrotism.uworldguard.util.BlockVector3;
 import org.bukkit.configuration.ConfigurationSection;
@@ -146,6 +147,9 @@ public final class RegionSerializer {
         for (final Map.Entry<Flag<?>, Object> e : region.getFlags().entrySet()) {
             flagSec.set(e.getKey().getName(), marshal(e.getKey(), e.getValue()));
         }
+        for (final Map.Entry<Flag<?>, RegionGroup> e : region.getFlagGroups().entrySet()) {
+            flagSec.set(e.getKey().getName() + "-group", e.getValue().serialized());
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -158,6 +162,14 @@ public final class RegionSerializer {
             return;
         }
         for (final String key : sec.getKeys(false)) {
+            if (key.endsWith("-group")) {
+                final Flag<?> flag = Flags.get(key.substring(0, key.length() - "-group".length()));
+                final Object raw = sec.get(key);
+                if (flag != null && raw != null) {
+                    region.setFlagGroup(flag, RegionGroup.parse(String.valueOf(raw)));
+                }
+                continue;
+            }
             final Flag<?> flag = Flags.get(key);
             if (flag != null) {
                 applyFlag(region, flag, sec.get(key));

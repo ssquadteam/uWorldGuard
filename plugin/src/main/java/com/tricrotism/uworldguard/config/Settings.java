@@ -4,15 +4,35 @@ import org.bukkit.Material;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.jspecify.annotations.NullMarked;
 
+import java.util.Locale;
+
 /**
  * Plugin configuration, loaded from {@code config.yml}.
  */
 @NullMarked
 public final class Settings {
 
+    /**
+     * How region entry/exit is detected for players.
+     */
+    public enum MovementMode {
+        /**
+         * Per-{@code PlayerMoveEvent}. Exact, and a denied crossing is cancelled before it happens.
+         */
+        EVENT,
+        /**
+         * Polled on a fixed interval. Cheaper at high player counts; a denied crossing is undone
+         * after the fact by teleporting the player back, and can lag by up to one interval.
+         */
+        TASK
+    }
+
     private String storageType = "yaml";
     private Material wandItem = Material.WOODEN_AXE;
     private int autoSaveMinutes = 5;
+
+    private MovementMode movementMode = MovementMode.EVENT;
+    private int movementTaskTicks = 4;
 
     private boolean sqlEnabled = false;
     private String sqlUrl = "jdbc:sqlite:plugins/uWorldGuard/regions.db";
@@ -22,6 +42,14 @@ public final class Settings {
     public void load(final FileConfiguration config) {
         storageType = config.getString("storage.type", storageType);
         autoSaveMinutes = config.getInt("storage.auto-save-minutes", autoSaveMinutes);
+
+        final String mode = config.getString("movement.mode", movementMode.name());
+        try {
+            movementMode = MovementMode.valueOf(mode.trim().toUpperCase(Locale.ROOT));
+        } catch (final IllegalArgumentException e) {
+            movementMode = MovementMode.EVENT;
+        }
+        movementTaskTicks = Math.max(1, config.getInt("movement.task-interval-ticks", movementTaskTicks));
 
         final String wand = config.getString("selection.wand-item", wandItem.name());
         final Material parsed = Material.matchMaterial(wand);
@@ -49,6 +77,14 @@ public final class Settings {
 
     public int autoSaveMinutes() {
         return autoSaveMinutes;
+    }
+
+    public MovementMode movementMode() {
+        return movementMode;
+    }
+
+    public int movementTaskTicks() {
+        return movementTaskTicks;
     }
 
     public String sqlUrl() {

@@ -5,6 +5,7 @@ import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.config.Settings;
 import com.tricrotism.uworldguard.gui.ChatInputListener;
 import com.tricrotism.uworldguard.gui.ChatInputService;
+import com.tricrotism.uworldguard.integration.GSitIntegration;
 import com.tricrotism.uworldguard.listeners.*;
 import com.tricrotism.uworldguard.migration.MigrationCommands;
 import com.tricrotism.uworldguard.region.RegionContainer;
@@ -13,11 +14,13 @@ import com.tricrotism.uworldguard.region.RegionQuery;
 import com.tricrotism.uworldguard.selection.SelectionService;
 import com.tricrotism.uworldguard.selection.WandSelectionProvider;
 import com.tricrotism.uworldguard.service.ChamberedPearlTracker;
+import com.tricrotism.uworldguard.service.ChunkUnloadService;
 import com.tricrotism.uworldguard.service.CollisionService;
-import com.tricrotism.uworldguard.service.HealService;
+import com.tricrotism.uworldguard.service.PlayerTickService;
 import com.tricrotism.uworldguard.storage.RegionStore;
 import com.tricrotism.uworldguard.storage.SqlRegionStore;
 import com.tricrotism.uworldguard.storage.YamlRegionStore;
+import com.tricrotism.uworldguard.text.ChatTags;
 import com.tricrotism.uworldguard.text.MessageService;
 import org.bstats.bukkit.Metrics;
 import org.bukkit.plugin.ServicePriority;
@@ -33,6 +36,27 @@ import java.util.logging.Level;
 public final class UWorldGuard extends JavaPlugin {
 
     private @Nullable RegionContainerImpl container;
+    private @Nullable Settings settings;
+    private @Nullable MovementListener movement;
+    private @Nullable CollisionService collision;
+
+    /**
+     * Re-reads {@code config.yml} and applies everything that can change at runtime. Movement mode is
+     * included, so switching EVENT/TASK or retuning the poll no longer needs a restart; storage
+     * backend and the selection wand are still bound at enable.
+     */
+    public void reloadSettings() {
+        reloadConfig();
+        final Settings current = this.settings;
+        if (current != null) {
+            current.load(getConfig());
+        }
+        EventGate.load(getConfig());
+        final MovementListener listener = this.movement;
+        if (listener != null && current != null) {
+            listener.applySettings(current);
+        }
+    }
 
     @Override
     public void onEnable() {
@@ -40,7 +64,12 @@ public final class UWorldGuard extends JavaPlugin {
         saveDefaultConfig();
         final Settings settings = new Settings();
         settings.load(getConfig());
+        this.settings = settings;
         EventGate.load(getConfig());
+
+        if (GSitIntegration.isPresent(getServer())) {
+            GSitIntegration.registerFlags();
+        }
 
         final RegionStore store = createStore(settings);
 
@@ -56,16 +85,19 @@ public final class UWorldGuard extends JavaPlugin {
         final SelectionService selection = new SelectionService(this, settings);
         final MessageService messages = new MessageService(this);
         final CollisionService collision = new CollisionService(this);
+        this.collision = collision;
         final ChamberedPearlTracker pearls = new ChamberedPearlTracker(this);
         final ChatInputService chatInput = new ChatInputService();
+        final ChatTags chatTags = new ChatTags();
 
         getServer().getPluginManager().registerEvents(new BuildProtectionListener(query, messages), this);
-        getServer().getPluginManager().registerEvents(
-            new MovementListener(this, query, messages, collision, pearls), this);
+        final MovementListener movement = new MovementListener(this, query, messages, collision, pearls, chatTags, settings);
+        this.movement = movement;
+        getServer().getPluginManager().registerEvents(movement, this);
         getServer().getPluginManager().registerEvents(new NaturalListener(query), this);
         getServer().getPluginManager().registerEvents(new CropTrampleListener(query), this);
         getServer().getPluginManager().registerEvents(new EntityListener(query), this);
-        getServer().getPluginManager().registerEvents(new PlayerStateListener(query), this);
+        getServer().getPluginManager().registerEvents(new PlayerStateListener(query, messages), this);
         getServer().getPluginManager().registerEvents(new ItemUseListener(query, messages), this);
         getServer().getPluginManager().registerEvents(new EndCrystalListener(query, messages), this);
         getServer().getPluginManager().registerEvents(new WorkbenchListener(query, messages), this);
@@ -74,6 +106,9 @@ public final class UWorldGuard extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new PearlListener(pearls), this);
         getServer().getPluginManager().registerEvents(new ChatInputListener(this, chatInput), this);
         getServer().getPluginManager().registerEvents(new WorldListener(regionContainer), this);
+        getServer().getPluginManager().registerEvents(new ChatListener(chatTags), this);
+        getServer().getPluginManager().registerEvents(new CommandListener(query, messages), this);
+        getServer().getPluginManager().registerEvents(new PistonListener(query), this);
         final WandSelectionProvider wand = selection.wandListener();
         if (wand != null) {
             getServer().getPluginManager().registerEvents(wand, this);
@@ -82,7 +117,16 @@ public final class UWorldGuard extends JavaPlugin {
         new RegionCommands(this, regionContainer, selection, chatInput, messages)
             .register(new MigrationCommands(this, regionContainer));
 
-        new HealService(this, regionContainer, query).start();
+        movement.start();
+        new PlayerTickService(this, regionContainer, query).start();
+        new ChunkUnloadService(this, regionContainer).start();
+
+        if (getServer().getPluginManager().getPlugin("WorldEdit") != null) {
+            new WorldEditFlagGuard(query, regionContainer).register();
+        }
+        if (GSitIntegration.isPresent(getServer())) {
+            new GSitIntegration(query).register(this);
+        }
 
         if (settings.autoSaveMinutes() > 0) {
             final long period = settings.autoSaveMinutes();
@@ -109,6 +153,12 @@ public final class UWorldGuard extends JavaPlugin {
     @Override
     public void onDisable() {
         UWorldGuardApi.bind(null);
+        if (movement != null) {
+            movement.stop();
+        }
+        if (collision != null) {
+            collision.shutdown();
+        }
         if (container != null) {
             container.saveAllBlocking();
         }

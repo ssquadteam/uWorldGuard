@@ -1,12 +1,10 @@
 package com.tricrotism.uworldguard.commands;
 
 import com.tricrotism.uworldguard.UWorldGuard;
-import com.tricrotism.uworldguard.config.EventGate;
+import com.tricrotism.uworldguard.config.Bypass;
 import com.tricrotism.uworldguard.domain.DefaultDomain;
-import com.tricrotism.uworldguard.flags.BooleanFlag;
+import com.tricrotism.uworldguard.flags.*;
 import com.tricrotism.uworldguard.flags.Flag;
-import com.tricrotism.uworldguard.flags.Flags;
-import com.tricrotism.uworldguard.flags.StateFlag;
 import com.tricrotism.uworldguard.gui.ChatInputService;
 import com.tricrotism.uworldguard.gui.FlagMenu;
 import com.tricrotism.uworldguard.gui.RegionMenu;
@@ -19,6 +17,7 @@ import com.tricrotism.uworldguard.text.Messages;
 import com.tricrotism.uworldguard.util.BlockVector3;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.OfflinePlayer;
@@ -36,9 +35,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * Region management commands, registered through Cloud's annotation parser.
@@ -76,31 +73,95 @@ public final class RegionCommands {
         }
     }
 
+    /**
+     * Which section of the help output a command belongs to, keyed by its first literal. Anything not
+     * listed falls into "Other", so a newly added command still shows up without touching this map.
+     */
+    private static final Map<String, String> HELP_GROUPS = Map.ofEntries(
+        Map.entry("define", "Creating regions"),
+        Map.entry("define-cylinder", "Creating regions"),
+        Map.entry("define-sphere", "Creating regions"),
+        Map.entry("define-polygon", "Creating regions"),
+        Map.entry("remove", "Creating regions"),
+        Map.entry("list", "Inspecting"),
+        Map.entry("info", "Inspecting"),
+        Map.entry("here", "Inspecting"),
+        Map.entry("bypass", "Administration"),
+        Map.entry("flag", "Configuring"),
+        Map.entry("priority", "Configuring"),
+        Map.entry("setparent", "Configuring"),
+        Map.entry("removeparent", "Configuring"),
+        Map.entry("addowner", "Owners & members"),
+        Map.entry("removeowner", "Owners & members"),
+        Map.entry("addmember", "Owners & members"),
+        Map.entry("removemember", "Owners & members"),
+        Map.entry("menu", "Menus"),
+        Map.entry("settings", "Menus"),
+        Map.entry("reload", "Administration"),
+        Map.entry("migrate", "Administration"));
+
+    private static final List<String> GROUP_ORDER = List.of(
+        "Creating regions", "Inspecting", "Configuring", "Owners & members",
+        "Menus", "Administration", "Other");
+
     @Command("uworldguard|uwg|worldguard|wg")
+    @CommandDescription("Show this command list")
     public void help(final Source sender) {
         final PaperCommandManager<Source> mgr = this.manager;
         if (mgr == null) return;
 
-        final List<String> lines = new ArrayList<>();
+        final Map<String, List<Component>> grouped = new HashMap<>();
+        int total = 0;
         for (final org.incendo.cloud.Command<Source> command : mgr.commands()) {
             final List<CommandComponent<Source>> components = command.components();
             if (components.size() < 2) continue;
             if (!mgr.testPermission(sender, command.commandPermission()).allowed()) continue;
 
-            final String syntax = "/uwg " + mgr.commandSyntaxFormatter().apply(
-                sender, components.subList(1, components.size()), null);
-            final org.incendo.cloud.description.CommandDescription description = command.commandDescription();
-            lines.add(description.isEmpty()
-                ? syntax
-                : syntax + "  -  " + description.description().textDescription());
-        }
-        lines.sort(null);
+            final List<CommandComponent<Source>> arguments = components.subList(1, components.size());
+            final String rendered = mgr.commandSyntaxFormatter().apply(sender, arguments, null);
+            final String root = arguments.getFirst().name();
+            final String syntax = "/uwg " + rendered;
 
-        Component message = Messages.format("<aqua>uWorldGuard</aqua> <gray>commands:");
-        for (final String line : lines) {
-            message = message.append(Component.newline())
-                .append(Component.text(line, NamedTextColor.GRAY));
+            Component line = CommandText.suggestable(
+                CommandText.syntax(syntax), syntax + " ", "Click to put this in your chat box");
+            final org.incendo.cloud.description.CommandDescription description = command.commandDescription();
+            if (!description.isEmpty()) {
+                line = line
+                    .append(Component.text("  —  ", CommandText.PUNCTUATION))
+                    .append(Component.text(
+                        description.description().textDescription(), CommandText.DESCRIPTION));
+            }
+            grouped.computeIfAbsent(HELP_GROUPS.getOrDefault(root, "Other"), _ -> new ArrayList<>())
+                .add(line);
+            total++;
         }
+
+        Component message = Component.text()
+            .append(Component.text("uWorldGuard", NamedTextColor.AQUA))
+            .append(Component.text(" — " + total + " command" + (total == 1 ? "" : "s") + " available",
+                CommandText.DESCRIPTION))
+            .build();
+
+        for (final String group : GROUP_ORDER) {
+            final List<Component> lines = grouped.get(group);
+            if (lines == null) continue;
+
+            lines.sort(Comparator.comparing(line -> PlainTextComponentSerializer.plainText().serialize(line)));
+            message = message.append(Component.newline()).append(CommandText.header(group));
+            for (final Component line : lines) {
+                message = message.append(Component.newline()).append(line);
+            }
+        }
+
+        message = message.append(Component.newline()).append(
+            Component.text("Colours: ", CommandText.DESCRIPTION)
+                .append(Component.text("command", CommandText.LITERAL))
+                .append(Component.text("  <", CommandText.PUNCTUATION))
+                .append(Component.text("required", CommandText.REQUIRED))
+                .append(Component.text(">  [", CommandText.PUNCTUATION))
+                .append(Component.text("optional", CommandText.OPTIONAL))
+                .append(Component.text("]", CommandText.PUNCTUATION)));
+
         sender.source().sendMessage(message);
     }
 
@@ -234,7 +295,7 @@ public final class RegionCommands {
     @Command("uworldguard|uwg|worldguard|wg remove <id>")
     @CommandDescription("Remove a region")
     @Permission("uworldguard.region.remove")
-    public void remove(final Source sender, @Argument("id") final String id) {
+    public void remove(final Source sender, @Argument(value = "id", suggestions = "region-ids") final String id) {
         final RegionManager regionManager = managerFor(sender);
         if (regionManager == null) return;
 
@@ -251,28 +312,141 @@ public final class RegionCommands {
         success(sender, "Removed region <aqua>" + id + "</aqua>.");
     }
 
-    @Command("uworldguard|uwg|worldguard|wg list")
-    @CommandDescription("List all regions in this world")
+    /**
+     * Regions shown per page of {@code /uwg list}, sized to leave the chat history readable.
+     */
+    private static final int PAGE_SIZE = 8;
+
+    @Command("uworldguard|uwg|worldguard|wg list [page]")
+    @CommandDescription("List regions in this world, a page at a time")
     @Permission("uworldguard.region.list")
-    public void list(final Source sender) {
+    public void list(final Source sender, @Argument("page") final @Nullable Integer pageArg) {
+        final int page = pageArg == null ? 1 : pageArg;
         final RegionManager regionManager = managerFor(sender);
         if (regionManager == null) return;
 
-        final StringBuilder sb = new StringBuilder();
-        for (final ProtectedRegion region : regionManager.getRegions()) {
-            if (!sb.isEmpty()) {
-                sb.append("<gray>, </gray>");
-            }
-            sb.append("<aqua>").append(region.getId()).append("</aqua>");
+        if (regionManager.size() == 0) {
+            note(sender, "No regions in this world yet. Make a selection, then run /uwg define <name>.");
+            return;
         }
 
-        note(sender, regionManager.size() == 0 ? "No regions in this world." : "Regions: " + sb);
+        final List<ProtectedRegion> regions = new ArrayList<>(regionManager.getRegions());
+        regions.sort(Comparator.comparing(ProtectedRegion::getId, String.CASE_INSENSITIVE_ORDER));
+
+        final int pages = (regions.size() + PAGE_SIZE - 1) / PAGE_SIZE;
+        final int index = Math.clamp(page, 1, pages);
+        final int from = (index - 1) * PAGE_SIZE;
+        final int to = Math.min(from + PAGE_SIZE, regions.size());
+
+        Component message = CommandText.header(regions.size()
+                + (regions.size() == 1 ? " region in " : " regions in ") + world(sender))
+            .append(Component.text("   page " + index + "/" + pages, CommandText.PUNCTUATION));
+
+        for (int i = from; i < to; i++) {
+            final ProtectedRegion region = regions.get(i);
+            message = message.append(Component.newline()).append(CommandText.runnable(
+                Component.text()
+                    .append(Component.text("  • ", CommandText.PUNCTUATION))
+                    .append(Component.text(region.getId(), CommandText.REGION))
+                    .append(Component.text("  " + region.getType().name().toLowerCase(Locale.ROOT)
+                            + ", priority " + region.getPriority()
+                            + ", " + (region.getOwners().size() + region.getMembers().size()) + " trusted",
+                        CommandText.DESCRIPTION))
+                    .build(),
+                "/uwg info " + region.getId(),
+                "Click for details about " + region.getId()));
+        }
+
+        if (pages > 1) {
+            message = message.append(Component.newline()).append(pager(index, pages));
+        }
+        sender.source().sendMessage(message);
+    }
+
+    /**
+     * Previous/next controls for a paged listing. Both stay in place when unavailable but render dim
+     * and inert, so the row does not jump around as you page through it.
+     */
+    private static Component pager(final int page, final int pages) {
+        final Component previous = page > 1
+            ? CommandText.runnable(Component.text("‹ prev", CommandText.LITERAL),
+            "/uwg list " + (page - 1), "Page " + (page - 1))
+            : Component.text("‹ prev", CommandText.PUNCTUATION);
+        final Component next = page < pages
+            ? CommandText.runnable(Component.text("next ›", CommandText.LITERAL),
+            "/uwg list " + (page + 1), "Page " + (page + 1))
+            : Component.text("next ›", CommandText.PUNCTUATION);
+        return Component.text()
+            .append(Component.text("  ", CommandText.DESCRIPTION))
+            .append(previous)
+            .append(Component.text("   ·   ", CommandText.PUNCTUATION))
+            .append(next)
+            .build();
+    }
+
+    private static String world(final Source sender) {
+        return sender.source() instanceof Player player ? player.getWorld().getName() : "this world";
+    }
+
+    @Command("uworldguard|uwg|worldguard|wg here")
+    @CommandDescription("Show the regions you are standing in")
+    @Permission("uworldguard.region.info")
+    public void here(final Source sender) {
+        final Player player = asPlayer(sender);
+        if (player == null) return;
+
+        final ApplicableRegionSet set = container.createQuery().getApplicableRegions(player);
+        final List<ProtectedRegion> regions = set.getRegions();
+        if (regions.isEmpty()) {
+            note(sender, "You are not standing in any region.");
+            return;
+        }
+
+        final UUID uuid = player.getUniqueId();
+        Component message = CommandText.header(regions.size()
+            + (regions.size() == 1 ? " region here" : " regions here, strongest first"));
+        for (final ProtectedRegion region : regions) {
+            final String standing = region.isOwner(uuid) ? "owner"
+                : region.isMember(uuid) ? "member" : "visitor";
+            message = message.append(Component.newline()).append(CommandText.runnable(
+                Component.text()
+                    .append(Component.text("  • ", CommandText.PUNCTUATION))
+                    .append(Component.text(region.getId(), CommandText.REGION))
+                    .append(Component.text("  priority " + region.getPriority() + ", you are ",
+                        CommandText.DESCRIPTION))
+                    .append(Component.text(standing, "visitor".equals(standing)
+                        ? CommandText.PUNCTUATION : CommandText.REQUIRED))
+                    .build(),
+                "/uwg info " + region.getId(),
+                "Click for details about " + region.getId()));
+        }
+        message = message.append(Component.newline()).append(Component.text(
+                "  You may build here: ", CommandText.DESCRIPTION))
+            .append(set.canBuild(uuid)
+                ? Component.text("yes", NamedTextColor.GREEN)
+                : Component.text("no", NamedTextColor.RED));
+        sender.source().sendMessage(message);
+    }
+
+    @Command("uworldguard|uwg|worldguard|wg bypass")
+    @CommandDescription("Toggle your own region bypass off or on")
+    @Permission(Bypass.NODE)
+    public void bypass(final Source sender) {
+        final Player player = asPlayer(sender);
+        if (player == null) return;
+
+        if (Bypass.toggle(player)) {
+            success(sender, "Bypass <green>on</green> — region protections no longer apply to you.");
+        } else {
+            note(sender, "Bypass <red>off</red> — you are treated as an ordinary player. "
+                + "Run <aqua>/uwg bypass</aqua> again to restore it.");
+        }
     }
 
     @Command("uworldguard|uwg|worldguard|wg info <id>")
     @CommandDescription("Show details about a region")
     @Permission("uworldguard.region.info")
-    public void info(final Source sender, @Argument("id") final String id) {
+    public void info(final Source sender, @Argument(value = "id", suggestions = "region-ids") final String id) {
         final RegionManager regionManager = managerFor(sender);
         if (regionManager == null) return;
 
@@ -283,21 +457,42 @@ public final class RegionCommands {
         }
 
         final ProtectedRegion parent = region.getParent();
-        note(sender, "Region <aqua>" + region.getId() + "</aqua> (" + region.getType().name().toLowerCase()
-            + "), priority " + region.getPriority()
-            + (parent != null ? ", parent <aqua>" + parent.getId() + "</aqua>" : "")
-            + ", owners " + region.getOwners().size()
-            + ", members " + region.getMembers().size()
-            + ", flags " + region.getFlags().size() + ".");
+        final int flagCount = region.getFlags().size();
+
+        Component card = CommandText.header("Region " + region.getId())
+            .append(Component.newline())
+            .append(CommandText.field("Type", region.getType().name().toLowerCase(Locale.ROOT)))
+            .append(Component.newline())
+            .append(CommandText.field("Priority", String.valueOf(region.getPriority())))
+            .append(Component.newline())
+            .append(CommandText.field("Parent", parent == null
+                ? Component.text("none", CommandText.PUNCTUATION)
+                : CommandText.runnable(Component.text(parent.getId(), CommandText.REGION),
+                "/uwg info " + parent.getId(), "Click for details about " + parent.getId())))
+            .append(Component.newline())
+            .append(CommandText.field("Owners", String.valueOf(region.getOwners().size())))
+            .append(Component.newline())
+            .append(CommandText.field("Members", String.valueOf(region.getMembers().size())));
+
+        card = card.append(Component.newline()).append(CommandText.field("Flags",
+            CommandText.runnable(
+                Component.text(flagCount + (flagCount == 0 ? " set" : " set — click to edit"),
+                    CommandText.VALUE),
+                "/uwg menu " + region.getId(),
+                "Open the flag menu for " + region.getId())));
+
+        sender.source().sendMessage(card);
     }
 
     @Command("uworldguard|uwg|worldguard|wg flag <id> <flag> [value]")
-    @CommandDescription("Set or clear a flag on a region")
+    @CommandDescription("Set or clear a flag on a region (-g to limit who it applies to)")
     @Permission("uworldguard.region.flag")
     public void flag(
         final Source sender,
-        @Argument("id") final String id,
+        @Argument(value = "id", suggestions = "region-ids") final String id,
         @Argument(value = "flag", suggestions = "flags") final String flagName,
+        @org.incendo.cloud.annotations.Flag(value = "group", aliases = "g",
+            suggestions = "flag-groups") final @Nullable String groupName,
         @Argument(value = "value", suggestions = "flag-values") @Greedy final @Nullable String value
     ) {
         final RegionManager regionManager = managerFor(sender);
@@ -317,18 +512,39 @@ public final class RegionCommands {
 
         if (value == null) {
             region.setFlag(flag, null);
+            region.setFlagGroup(flag, null);
             regionManager.markDirty();
             success(sender, "Cleared flag <aqua>" + flag.getName() + "</aqua>.");
             return;
+        }
+
+        RegionGroup group = null;
+        if (groupName != null) {
+            group = RegionGroup.parse(groupName);
+            if (group == null) {
+                error(sender, "Unknown group <aqua>" + groupName + "</aqua>. Use one of: "
+                    + "all, members, owners, nonmembers, nonowners, none.");
+                return;
+            }
         }
 
         if (!applyFlag(region, flag, value)) {
             error(sender, "Invalid value for flag <aqua>" + flag.getName() + "</aqua>.");
             return;
         }
+        if (groupName != null) {
+            region.setFlagGroup(flag, group);
+        }
 
         regionManager.markDirty();
-        success(sender, "Set flag <aqua>" + flag.getName() + "</aqua> to <aqua>" + value + "</aqua>.");
+        success(sender, "Set flag <aqua>" + flag.getName() + "</aqua> to <aqua>" + value + "</aqua>"
+            + (group != null && group != RegionGroup.ALL
+            ? " for <aqua>" + group.serialized() + "</aqua>" : "") + ".");
+    }
+
+    @Suggestions("flag-groups")
+    public List<String> suggestFlagGroups(final CommandContext<Source> ctx, final String input) {
+        return List.of("all", "members", "owners", "nonmembers", "nonowners", "none");
     }
 
     @Command("uworldguard|uwg|worldguard|wg priority <id> <priority>")
@@ -336,7 +552,7 @@ public final class RegionCommands {
     @Permission("uworldguard.region.priority")
     public void priority(
         final Source sender,
-        @Argument("id") final String id,
+        @Argument(value = "id", suggestions = "region-ids") final String id,
         @Argument("priority") final int priority
     ) {
         final RegionManager regionManager = managerFor(sender);
@@ -451,9 +667,9 @@ public final class RegionCommands {
     @Permission("uworldguard.reload")
     public void reload(final Source sender) {
         messages.reload();
-        plugin.reloadConfig();
-        EventGate.load(plugin.getConfig());
-        success(sender, "Reloaded messages and config. <gray>(Storage/wand changes need a restart.)");
+        plugin.reloadSettings();
+        success(sender, "Reloaded messages, config, and movement mode. "
+            + "<gray>(Storage backend and wand item still need a restart.)");
     }
 
     @Command("uworldguard|uwg|worldguard|wg menu <id>")
@@ -483,8 +699,8 @@ public final class RegionCommands {
     @Permission("uworldguard.region.members")
     public void addOwner(
         final Source sender,
-        @Argument("id") final String id,
-        @Argument("player") final String playerName
+        @Argument(value = "id", suggestions = "region-ids") final String id,
+        @Argument(value = "player", suggestions = "players") final String playerName
     ) {
         member(sender, id, playerName, true, true);
     }
@@ -494,8 +710,8 @@ public final class RegionCommands {
     @Permission("uworldguard.region.members")
     public void removeOwner(
         final Source sender,
-        @Argument("id") final String id,
-        @Argument("player") final String playerName
+        @Argument(value = "id", suggestions = "region-ids") final String id,
+        @Argument(value = "player", suggestions = "players") final String playerName
     ) {
         member(sender, id, playerName, true, false);
     }
@@ -505,8 +721,8 @@ public final class RegionCommands {
     @Permission("uworldguard.region.members")
     public void addMember(
         final Source sender,
-        @Argument("id") final String id,
-        @Argument("player") final String playerName
+        @Argument(value = "id", suggestions = "region-ids") final String id,
+        @Argument(value = "player", suggestions = "players") final String playerName
     ) {
         member(sender, id, playerName, false, true);
     }
@@ -516,8 +732,8 @@ public final class RegionCommands {
     @Permission("uworldguard.region.members")
     public void removeMember(
         final Source sender,
-        @Argument("id") final String id,
-        @Argument("player") final String playerName
+        @Argument(value = "id", suggestions = "region-ids") final String id,
+        @Argument(value = "player", suggestions = "players") final String playerName
     ) {
         member(sender, id, playerName, false, false);
     }
@@ -573,12 +789,34 @@ public final class RegionCommands {
         return names;
     }
 
+    @Suggestions("players")
+    public List<String> suggestPlayers(final CommandContext<Source> ctx, final String input) {
+        final List<String> names = new ArrayList<>();
+        for (final Player online : plugin.getServer().getOnlinePlayers()) {
+            names.add(online.getName());
+        }
+        return names;
+    }
+
+    /**
+     * Value suggestions for {@code /uwg flag}. Where a flag has no closed set of values, the
+     * suggestion is a shaped example rather than nothing, so the expected format is discoverable from
+     * the command line instead of only from the menu's "Accepts:" line.
+     */
     @Suggestions("flag-values")
     public List<String> suggestFlagValues(final CommandContext<Source> ctx, final String input) {
         final Flag<?> flag = Flags.get(ctx.getOrDefault("flag", ""));
         if (flag instanceof StateFlag) return List.of("allow", "deny");
         if (flag instanceof BooleanFlag) return List.of("true", "false");
         if (flag == Flags.GAME_MODE) return List.of("survival", "creative", "adventure", "spectator");
+        if (flag instanceof StringSetFlag) return List.of("home,tp,spawn");
+        if (flag instanceof PotionEffectSetFlag) return List.of("SPEED:1,NIGHT_VISION");
+        if (flag instanceof MaterialSetFlag) return List.of("DIAMOND_SWORD,BOW");
+        if (flag instanceof IntegerFlag || flag instanceof DoubleFlag) return List.of("1");
+        if (flag == Flags.TELEPORT_ON_ENTRY || flag == Flags.TELEPORT_ON_EXIT
+            || flag == Flags.RESPAWN_LOCATION || flag == Flags.JOIN_LOCATION) {
+            return List.of("world,0,64,0");
+        }
 
         return List.of();
     }

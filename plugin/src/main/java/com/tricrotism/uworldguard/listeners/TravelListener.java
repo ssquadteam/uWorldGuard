@@ -1,5 +1,6 @@
 package com.tricrotism.uworldguard.listeners;
 
+import com.tricrotism.uworldguard.config.Bypass;
 import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.region.RegionQuery;
@@ -20,8 +21,6 @@ import org.jspecify.annotations.Nullable;
 @NullMarked
 public final class TravelListener implements Listener {
 
-    private static final String BYPASS = "uworldguard.bypass";
-
     private final RegionQuery query;
 
     public TravelListener(final RegionQuery query) {
@@ -37,7 +36,7 @@ public final class TravelListener implements Listener {
             return;
         }
         if (!query.testState(player, Flags.GLIDE)) {
-            if (player.hasPermission(BYPASS)) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
@@ -50,8 +49,8 @@ public final class TravelListener implements Listener {
             return;
         }
         final Player player = event.getPlayer();
-        if (!query.testState(event.getFrom(), Flags.NETHER_PORTALS)) {
-            if (player.hasPermission(BYPASS)) {
+        if (!query.testState(event.getFrom(), Flags.NETHER_PORTALS, player)) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
@@ -68,7 +67,7 @@ public final class TravelListener implements Listener {
             return;
         }
         if (!query.testState(event.getFrom(), Flags.NETHER_PORTALS)) {
-            if (player.hasPermission(BYPASS)) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);

@@ -1,5 +1,6 @@
 package com.tricrotism.uworldguard.listeners;
 
+import com.tricrotism.uworldguard.config.Bypass;
 import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.region.ApplicableRegionSet;
@@ -27,7 +28,6 @@ import org.jspecify.annotations.Nullable;
 @NullMarked
 public final class BuildProtectionListener implements Listener {
 
-    private static final String BYPASS = "uworldguard.bypass";
 
     private final RegionQuery query;
     private final MessageService messages;
@@ -47,22 +47,22 @@ public final class BuildProtectionListener implements Listener {
         final ApplicableRegionSet set = query.getApplicableRegions(block);
         final Material type = block.getType();
         if (set.flagSetContains(Flags.DENY_BLOCK_BREAK, type)) {
-            if (player.hasPermission(BYPASS)) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, Flags.BLOCK_BREAK);
             return;
         }
         if (set.flagSetContains(Flags.ALLOW_BLOCK_BREAK, type)) {
             return;
         }
-        if (!set.canBuild(player.getUniqueId()) || !set.testState(Flags.BLOCK_BREAK)) {
-            if (player.hasPermission(BYPASS)) {
+        if (!set.canBuild(player.getUniqueId()) || !set.testState(Flags.BLOCK_BREAK, player.getUniqueId())) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, Flags.BLOCK_BREAK);
         }
     }
 
@@ -76,22 +76,22 @@ public final class BuildProtectionListener implements Listener {
         final ApplicableRegionSet set = query.getApplicableRegions(block);
         final Material type = block.getType();
         if (set.flagSetContains(Flags.DENY_BLOCK_PLACE, type)) {
-            if (player.hasPermission(BYPASS)) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, Flags.BLOCK_PLACE);
             return;
         }
         if (set.flagSetContains(Flags.ALLOW_BLOCK_PLACE, type)) {
             return;
         }
-        if (!set.canBuild(player.getUniqueId()) || !set.testState(Flags.BLOCK_PLACE)) {
-            if (player.hasPermission(BYPASS)) {
+        if (!set.canBuild(player.getUniqueId()) || !set.testState(Flags.BLOCK_PLACE, player.getUniqueId())) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, Flags.BLOCK_PLACE);
         }
     }
 
@@ -106,12 +106,14 @@ public final class BuildProtectionListener implements Listener {
         }
         final Player player = event.getPlayer();
         final ApplicableRegionSet set = query.getApplicableRegions(block);
-        if (!set.canBuild(player.getUniqueId()) && (!set.testState(Flags.INTERACT) || !set.testState(Flags.USE))) {
-            if (player.hasPermission(BYPASS)) {
+        if (!set.canBuild(player.getUniqueId())
+            && (!set.testState(Flags.INTERACT, player.getUniqueId())
+            || !set.testState(Flags.USE, player.getUniqueId()))) {
+            if (Bypass.has(player)) {
                 return;
             }
             event.setCancelled(true);
-            messages.send(player, "no-permission");
+            messages.sendDeny(player, Flags.INTERACT);
         }
     }
 
@@ -127,8 +129,9 @@ public final class BuildProtectionListener implements Listener {
         if (attacker == null) {
             return;
         }
-        if (!query.testState(event.getEntity(), Flags.PVP)) {
-            if (attacker.hasPermission(BYPASS)) {
+        if (!query.getApplicableRegions(event.getEntity())
+            .testState(Flags.PVP, attacker.getUniqueId())) {
+            if (Bypass.has(attacker)) {
                 return;
             }
             event.setCancelled(true);

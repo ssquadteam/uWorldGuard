@@ -3,11 +3,24 @@
 # Each entry supports MiniMessage formatting (https://docs.advntr.dev/minimessage/) and, when
 # PlaceholderAPI is installed, %placeholder% values resolved against the receiving player.
 # Set an entry to "" (empty) or false to disable it.
+#
+# no-permission is the shared denial message, used whenever a flag blocks a player. To word it
+# differently for one flag, add "no-permission-<flag>" — the per-flag entry wins over the shared
+# one. The two disable independently: set a per-flag entry to false to silence only that flag,
+# or disable no-permission itself to silence every flag that has no override of its own.
+# Cooldown applies to whichever entry is used, so an overridden flag gets its own throttle.
+#
+# Flags that can send a denial:
+#   block-break, block-place, interact, chest-access, end-crystal-place, end-crystal-interact,
+#   villager-trade, permit-workbenches, inventory-craft, disable-completely, disable-throw,
+#   deny-item-drops, blocked-cmds
 
 # Seconds a player must wait before the same message is shown to them again. 0 = no cooldown.
 cooldown-seconds: 3
 
 messages:
     no-permission: "<red>You don't have permission to do that here."
+    # no-permission-chest-access: "<red>This container is locked."
+    # no-permission-block-break: false
     entry-denied: "<red>You cannot enter this area."
     exit-denied: "<red>You cannot leave this area."

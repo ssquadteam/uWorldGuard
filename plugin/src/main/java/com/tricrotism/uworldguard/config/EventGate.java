@@ -10,6 +10,8 @@ import org.bukkit.event.inventory.InventoryInteractEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.player.PlayerEvent;
 import org.bukkit.event.vehicle.VehicleEvent;
+import org.bukkit.event.weather.WeatherEvent;
+import org.bukkit.event.world.WorldEvent;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
@@ -134,6 +136,12 @@ public final class EventGate {
         }
         if (event instanceof VehicleEvent e) {
             return e.getVehicle().getWorld();
+        }
+        if (event instanceof WeatherEvent e) {
+            return e.getWorld();
+        }
+        if (event instanceof WorldEvent e) {
+            return e.getWorld();
         }
         if (event instanceof InventoryOpenEvent e) {
             return e.getPlayer().getWorld();

@@ -108,6 +108,14 @@ public final class ApplicableRegionSet {
     }
 
     /**
+     * The group-qualifier state this set snapshotted — for the manager's empty-set cache, which has
+     * to drop a cached set whose snapshot has gone stale.
+     */
+    boolean usesGroups() {
+        return groupsInUse;
+    }
+
+    /**
      * Resolve a state flag for an actor that is not a player (or whose identity does not matter).
      * Group-qualified values are evaluated as WorldGuard does for non-players: as a non-member.
      */

@@ -3,6 +3,7 @@ package com.tricrotism.uworldguard.listeners;
 import com.tricrotism.uworldguard.config.Bypass;
 import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.config.Settings;
+import com.tricrotism.uworldguard.flags.BooleanFlag;
 import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.flags.State;
 import com.tricrotism.uworldguard.region.ApplicableRegionSet;
@@ -15,9 +16,13 @@ import com.tricrotism.uworldguard.text.MessageService;
 import com.tricrotism.uworldguard.util.Locations;
 import io.papermc.paper.event.entity.EntityMoveEvent;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
+import net.kyori.adventure.title.Title;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
+import org.bukkit.World;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -45,6 +50,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @NullMarked
 public final class MovementListener implements Listener {
 
+    private static final String NOTIFY_PERMISSION = "uworldguard.notify";
 
     private final Plugin plugin;
     private final RegionQuery query;
@@ -67,9 +73,10 @@ public final class MovementListener implements Listener {
      */
     private volatile int sweepEvery;
     /**
-     * Only ever touched from the global region task, which runs its repeats sequentially.
+     * Counted up only by the global region task, which runs its repeats sequentially — but reset to
+     * zero by {@code /uwg reload} on whatever thread that arrived on, so the writes have to publish.
      */
-    private int sweepTick;
+    private volatile int sweepTick;
     private @Nullable ScheduledTask pollTask;
 
     public MovementListener(
@@ -112,7 +119,7 @@ public final class MovementListener implements Listener {
         final ApplicableRegionSet fromSet = query.getApplicableRegions(from);
         final ApplicableRegionSet toSet = query.getApplicableRegions(to);
 
-        if (processCrossing(player, fromSet, toSet)) {
+        if (processCrossing(player, to.getWorld(), fromSet, toSet)) {
             event.setCancelled(true);
             return;
         }
@@ -167,6 +174,66 @@ public final class MovementListener implements Listener {
     }
 
     /**
+     * Puts back everything {@link #applyState} overrode, for players still online when the plugin
+     * goes away. Leaving a region restores it and so does quitting, but a disable does neither: a
+     * player standing in a {@code game-mode} / {@code fly} region keeps creative and flight for good,
+     * and one inside a {@code hide-players} region keeps every other player invisible for the rest of
+     * their session — the hidden-entity list CraftBukkit keeps is keyed by plugin and is not swept
+     * when one unloads.
+     *
+     * <p>The plugin is still enabled while {@code onDisable} runs, so each restore can still be
+     * scheduled onto the thread that owns the player, which is the only one allowed to make it.
+     */
+    public void shutdown() {
+        savedGameModes.forEach((uuid, mode) -> {
+            final Player player = Bukkit.getPlayer(uuid);
+            if (player != null) {
+                player.getScheduler().run(plugin, task -> player.setGameMode(mode), null);
+            }
+        });
+        savedGameModes.clear();
+
+        savedWalkSpeed.forEach((uuid, saved) -> {
+            final Player player = Bukkit.getPlayer(uuid);
+            if (player != null) {
+                final float speed = saved;
+                player.getScheduler().run(plugin, task -> player.setWalkSpeed(speed), null);
+            }
+        });
+        savedWalkSpeed.clear();
+
+        savedFlySpeed.forEach((uuid, saved) -> {
+            final Player player = Bukkit.getPlayer(uuid);
+            if (player != null) {
+                final float speed = saved;
+                player.getScheduler().run(plugin, task -> player.setFlySpeed(speed), null);
+            }
+        });
+        savedFlySpeed.clear();
+
+        savedAllowFlight.forEach((uuid, saved) -> {
+            final Player player = Bukkit.getPlayer(uuid);
+            if (player != null && !saved) {
+                player.getScheduler().run(plugin, task -> player.setAllowFlight(false), null);
+            }
+        });
+        savedAllowFlight.clear();
+
+        for (final UUID viewerId : hidden) {
+            final Player viewer = Bukkit.getPlayer(viewerId);
+            if (viewer == null) {
+                continue;
+            }
+            for (final Player other : Bukkit.getOnlinePlayers()) {
+                if (other != viewer) {
+                    other.getScheduler().run(plugin, task -> viewer.showPlayer(plugin, other), null);
+                }
+            }
+        }
+        hidden.clear();
+    }
+
+    /**
      * One polled sample for a player. Compares the current block against the last sampled one without
      * allocating, and only on a change resolves regions and runs the crossing. A denied crossing is
      * undone by teleporting back to the last accepted position — the task path has no event to cancel
@@ -217,8 +284,8 @@ public final class MovementListener implements Listener {
         }
 
         final ApplicableRegionSet fromSet = query.getApplicableRegions(last);
-        if (processCrossing(player, fromSet, toSet)) {
-            player.teleport(last);
+        if (processCrossing(player, current.getWorld(), fromSet, toSet)) {
+            player.teleportAsync(last);
             return;
         }
         lastPosition.put(uuid, current);
@@ -228,6 +295,10 @@ public final class MovementListener implements Listener {
     /**
      * Whether the player is standing somewhere the entry flag refuses them. Cheapest checks first:
      * wilderness and bypassing staff leave immediately, before any flag resolution.
+     *
+     * <p>Deliberately does not consider {@code player-count-limit}: that is an entry gate, not a
+     * standing condition. Applied here, a region holding more players than its limit would look full
+     * to every one of them at once and the sweep would eject the lot.
      */
     private boolean deniedInside(final Player player, final UUID uuid, final ApplicableRegionSet set) {
         if (set.isEmpty() || Bypass.has(player)) {
@@ -252,16 +323,20 @@ public final class MovementListener implements Listener {
         dismountIfRiding(player);
         lastPosition.put(uuid, target);
         messages.sendFlag(player, set.queryValue(Flags.ENTRY_DENY_MESSAGE), "entry-denied");
-        player.teleport(target);
+        player.teleportAsync(target);
     }
 
     /**
      * Entry/exit enforcement and per-region enter/leave effects for a player who moved from
      * {@code fromSet} to {@code toSet}. Returns true if the crossing was denied, leaving it to the
      * caller to undo the movement — the event path cancels, the polled path teleports back.
+     *
+     * <p>{@code world} is the destination's, needed to count a region's occupants: regions carry no
+     * world of their own, and on a cross-world teleport the player's is still the origin.
      */
     private boolean processCrossing(
-        final Player player, final ApplicableRegionSet fromSet, final ApplicableRegionSet toSet
+        final Player player, final World world, final ApplicableRegionSet fromSet,
+        final ApplicableRegionSet toSet
     ) {
         final boolean entering = !isInside(fromSet, toSet);
         final boolean leaving = !isInside(toSet, fromSet);
@@ -277,13 +352,19 @@ public final class MovementListener implements Listener {
             messages.sendFlag(player, toSet.queryValue(Flags.ENTRY_DENY_MESSAGE), "entry-denied");
             return true;
         }
-        if (!bypass && leaving && !fromSet.testState(Flags.EXIT, uuid) && !isMember(fromSet, uuid)) {
+
+        if (!bypass && leaving && !fromSet.testState(Flags.EXIT, uuid) && !isMember(fromSet, uuid)
+            && !Boolean.TRUE.equals(fromSet.queryValue(Flags.EXIT_OVERRIDE))) {
             dismountIfRiding(player);
             messages.sendFlag(player, fromSet.queryValue(Flags.EXIT_DENY_MESSAGE), "exit-denied");
             return true;
         }
         if (!bypass && entering && !isMember(toSet, uuid) && levelDenied(player, toSet)) {
             messages.send(player, "entry-denied");
+            return true;
+        }
+        if (!bypass && entering && toSet.worldUses(Flags.PLAYER_COUNT_LIMIT)
+            && countDenied(world, player, uuid, fromSet, toSet)) {
             return true;
         }
 
@@ -375,6 +456,9 @@ public final class MovementListener implements Listener {
             return false;
         }
 
+        final boolean limited = entering && toSet.worldUses(Flags.PLAYER_COUNT_LIMIT);
+        final World world = to.getWorld();
+
         List<Player> denied = null;
         for (final Entity passenger : passengers) {
             if (!(passenger instanceof Player player) || Bypass.has(player)) {
@@ -385,7 +469,7 @@ public final class MovementListener implements Listener {
                 messages.sendFlag(player, toSet.queryValue(Flags.ENTRY_DENY_MESSAGE), "entry-denied");
             } else if (leaving && !fromSet.testState(Flags.EXIT, uuid) && !isMember(fromSet, uuid)) {
                 messages.sendFlag(player, fromSet.queryValue(Flags.EXIT_DENY_MESSAGE), "exit-denied");
-            } else {
+            } else if (!limited || !countDenied(world, player, uuid, fromSet, toSet)) {
                 continue;
             }
             if (denied == null) {
@@ -440,11 +524,24 @@ public final class MovementListener implements Listener {
         riddenMounts.add(mount.getUniqueId());
     }
 
-    @EventHandler
+    /**
+     * Stops tracking a mount once its last player rider steps off. The event fires before the
+     * dismount applies, so the leaver is still listed as a passenger and has to be excluded —
+     * untracking on the first of two riders would silently stop enforcing the crossing for the one
+     * still aboard. Cancelled dismounts leave the tracking alone, since the rider stays on.
+     */
+    @EventHandler(ignoreCancelled = true)
     public void onDismount(final EntityDismountEvent event) {
-        if (event.getEntity() instanceof Player) {
-            riddenMounts.remove(event.getDismounted().getUniqueId());
+        if (!(event.getEntity() instanceof Player leaver)) {
+            return;
         }
+        final Entity mount = event.getDismounted();
+        for (final Entity passenger : mount.getPassengers()) {
+            if (passenger != leaver && passenger instanceof Player) {
+                return;
+            }
+        }
+        riddenMounts.remove(mount.getUniqueId());
     }
 
     private void onEnterRegion(final Player player, final ProtectedRegion region) {
@@ -452,6 +549,8 @@ public final class MovementListener implements Listener {
         if (greeting != null) {
             player.sendMessage(messages.render(greeting, player));
         }
+        showTitle(player, region.getFlag(Flags.GREETING_TITLE));
+        notifyStaff(player, region, Flags.NOTIFY_ENTER, "notify-enter");
         runCommand(player, region.getFlag(Flags.COMMAND_ON_ENTRY), false);
         runCommand(player, region.getFlag(Flags.CONSOLE_COMMAND_ON_ENTRY), true);
         playSound(player, region.getFlag(Flags.PLAY_SOUNDS));
@@ -466,9 +565,64 @@ public final class MovementListener implements Listener {
         if (farewell != null) {
             player.sendMessage(messages.render(farewell, player));
         }
+        showTitle(player, region.getFlag(Flags.FAREWELL_TITLE));
+        notifyStaff(player, region, Flags.NOTIFY_LEAVE, "notify-leave");
         runCommand(player, region.getFlag(Flags.COMMAND_ON_EXIT), false);
         runCommand(player, region.getFlag(Flags.CONSOLE_COMMAND_ON_EXIT), true);
         teleport(player, region.getFlag(Flags.TELEPORT_ON_EXIT));
+    }
+
+    /**
+     * Announces a crossing to staff holding {@code uworldguard.notify}, wording it from the
+     * {@code messageKey} entry in messages.yml — so the announcement can be recoloured, reworded or
+     * turned off without touching the flag that triggers it.
+     *
+     * <p>The broadcast goes to the global region thread rather than running here: it walks every
+     * online player, which is not work to do inside the move event of the one player who crossed.
+     * Only the crossing player's name is carried across, never the player itself, since that thread
+     * does not own them. The recipients are not owned by it either — a player's permission map is
+     * rewritten unsynchronised on their own thread — so the permission test and the send hop once
+     * more, onto each recipient's entity scheduler.
+     */
+    private void notifyStaff(
+        final Player player, final ProtectedRegion region, final BooleanFlag flag, final String messageKey
+    ) {
+        if (!Boolean.TRUE.equals(region.getFlag(flag))) {
+            return;
+        }
+        final String name = player.getName();
+        final String id = region.getId();
+        plugin.getServer().getGlobalRegionScheduler().execute(plugin, () -> {
+            final Component line = messages.broadcast(messageKey,
+                Placeholder.unparsed("player", name),
+                Placeholder.unparsed("region", id));
+            if (line == null) {
+                return;
+            }
+            for (final Player staff : plugin.getServer().getOnlinePlayers()) {
+                staff.getScheduler().run(plugin, task -> {
+                    if (staff.hasPermission(NOTIFY_PERMISSION)) {
+                        staff.sendMessage(line);
+                    }
+                }, null);
+            }
+        });
+    }
+
+    /**
+     * Shows a greeting/farewell title. A literal {@code \n} splits it into title and subtitle, which is
+     * how WorldGuard writes a two-line title into a region file.
+     */
+    private void showTitle(final Player player, final @Nullable String raw) {
+        if (raw == null || raw.isBlank()) {
+            return;
+        }
+        final int split = raw.indexOf("\\n");
+        final String main = split < 0 ? raw : raw.substring(0, split);
+        final String sub = split < 0 ? "" : raw.substring(split + 2);
+        player.showTitle(Title.title(
+            messages.render(main, player),
+            sub.isEmpty() ? Component.empty() : messages.render(sub, player)));
     }
 
     /**
@@ -503,7 +657,9 @@ public final class MovementListener implements Listener {
 
     /**
      * Teleports the moving player on their own entity scheduler (next tick), which is Folia-safe
-     * and avoids re-entering the move event we are currently handling.
+     * and avoids re-entering the move event we are currently handling. The destination comes from a
+     * flag and may name any world, so it is never guaranteed to belong to the region we are on —
+     * {@code teleportAsync} is the only form that can cross one.
      */
     private void teleport(final Player player, final @Nullable String raw) {
         if (raw == null || raw.isBlank()) {
@@ -511,7 +667,7 @@ public final class MovementListener implements Listener {
         }
         final Location target = Locations.parse(messages.expand(player, raw));
         if (target != null) {
-            player.getScheduler().run(plugin, task -> player.teleport(target), null);
+            player.getScheduler().run(plugin, task -> player.teleportAsync(target), null);
         }
     }
 
@@ -523,6 +679,68 @@ public final class MovementListener implements Listener {
         }
         final Integer max = levelThreshold(player, toSet.queryValue(Flags.ENTRY_MAX_LEVEL));
         return max != null && level > max;
+    }
+
+    /**
+     * Whether any region the player is newly entering is already holding its {@code player-count-limit}.
+     * Members and owners are never refused, but they do count towards the total, so a region full of
+     * its own members is closed to outsiders. Sends the refusal itself, because the message carries
+     * the count and the limit it just resolved.
+     *
+     * <p>A limit belongs to one region rather than to the set, so this walks the regions being entered
+     * instead of using {@code queryValue}, which would collapse several nested limits into whichever
+     * has the highest priority. The global region is not consulted for the same reason it is not in
+     * the set: a per-world cap on players is the server's slot limit, not a region flag.
+     */
+    private boolean countDenied(
+        final World world, final Player player, final UUID uuid, final ApplicableRegionSet fromSet,
+        final ApplicableRegionSet toSet
+    ) {
+        for (int i = 0, n = toSet.size(); i < n; i++) {
+            final ProtectedRegion region = toSet.get(i);
+            if (contains(fromSet, region) || region.isMember(uuid)) {
+                continue;
+            }
+            final Integer limit = region.getFlag(Flags.PLAYER_COUNT_LIMIT);
+            if (limit == null) {
+                continue;
+            }
+            final int count = occupants(world, region, player);
+            if (count >= limit) {
+                messages.send(player, "region-full",
+                    Placeholder.unparsed("count", Integer.toString(count)),
+                    Placeholder.unparsed("limit", Integer.toString(limit)));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * How many players stand inside {@code region} right now, excluding the one moving: on the polled
+     * path they have already physically entered, so counting them would read one over the truth.
+     *
+     * <p>Only reached once the world's flag bitset says someone uses the limit and the player is
+     * actually entering a region that sets it, so the walk over the world's players stays off every
+     * ordinary crossing.
+     *
+     * <p>The other players' positions are read from the mover's thread, so a count can be a player
+     * out of date if someone crossed the boundary in the same tick. Accepted: hopping to each
+     * player's own scheduler to read three doubles would cost more than the imprecision, and a
+     * capacity check that is momentarily off by one settles on the next crossing.
+     */
+    private static int occupants(final World world, final ProtectedRegion region, final Player mover) {
+        int count = 0;
+        for (final Player other : world.getPlayers()) {
+            if (other == mover) {
+                continue;
+            }
+            if (region.contains(Location.locToBlock(other.getX()), Location.locToBlock(other.getY()),
+                Location.locToBlock(other.getZ()))) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private @Nullable Integer levelThreshold(final Player player, final @Nullable String raw) {
@@ -547,6 +765,11 @@ public final class MovementListener implements Listener {
     /**
      * Applies the region's continuous player state (game-mode, walk/fly speed, flight) while inside,
      * restoring each to the value the player had before entering once the override no longer applies.
+     *
+     * <p>Every restore branch is gated on its map being non-empty. The read side already skips the
+     * work via {@code worldUses}, but the restore side ran unconditionally — six map mutations against
+     * permanently empty maps on every block crossing of every player, on a server where no region sets
+     * any of these flags.
      */
     private void applyState(final Player player, final ApplicableRegionSet toSet) {
         final UUID uuid = player.getUniqueId();
@@ -558,7 +781,7 @@ public final class MovementListener implements Listener {
                 savedGameModes.putIfAbsent(uuid, player.getGameMode());
                 player.setGameMode(mode);
             }
-        } else {
+        } else if (!savedGameModes.isEmpty()) {
             final GameMode saved = savedGameModes.remove(uuid);
             if (saved != null && player.getGameMode() != saved) {
                 player.setGameMode(saved);
@@ -574,7 +797,7 @@ public final class MovementListener implements Listener {
             if (player.getWalkSpeed() != target) {
                 player.setWalkSpeed(target);
             }
-        } else {
+        } else if (!savedWalkSpeed.isEmpty()) {
             final Float saved = savedWalkSpeed.remove(uuid);
             if (saved != null) {
                 player.setWalkSpeed(saved);
@@ -590,7 +813,7 @@ public final class MovementListener implements Listener {
             if (player.getFlySpeed() != target) {
                 player.setFlySpeed(target);
             }
-        } else {
+        } else if (!savedFlySpeed.isEmpty()) {
             final Float saved = savedFlySpeed.remove(uuid);
             if (saved != null) {
                 player.setFlySpeed(saved);
@@ -602,7 +825,7 @@ public final class MovementListener implements Listener {
                 savedAllowFlight.putIfAbsent(uuid, Boolean.FALSE);
                 player.setAllowFlight(true);
             }
-        } else {
+        } else if (!savedAllowFlight.isEmpty()) {
             final Boolean saved = savedAllowFlight.remove(uuid);
             if (saved != null && !saved) {
                 player.setAllowFlight(false);
@@ -617,6 +840,12 @@ public final class MovementListener implements Listener {
             chatTags.setSuffix(uuid, toSet.queryValue(Flags.CHAT_SUFFIX));
         }
 
+        if (toSet.worldUses(Flags.SEND_CHAT) || toSet.worldUses(Flags.RECEIVE_CHAT)) {
+            final boolean bypass = Bypass.has(player);
+            chatTags.setMuted(uuid, !bypass && !toSet.testState(Flags.SEND_CHAT, uuid));
+            chatTags.setDeafened(uuid, !bypass && !toSet.testState(Flags.RECEIVE_CHAT, uuid));
+        }
+
         applyHidePlayers(player, uuid, toSet.worldUses(Flags.HIDE_PLAYERS)
             && Boolean.TRUE.equals(toSet.queryValue(Flags.HIDE_PLAYERS)));
     }
@@ -625,20 +854,24 @@ public final class MovementListener implements Listener {
      * Hides every other online player from {@code player} while inside a hide-players region, and
      * restores them on leaving. State-transition based: the O(n) hide/show loop only runs when the
      * player crosses into or out of the hidden state, never per move.
+     *
+     * <p>{@code hidePlayer}/{@code showPlayer} reach into the <em>target's</em> tracker entry to add
+     * or drop the viewer, so each call hops to the target's own scheduler rather than running on the
+     * mover's thread. The {@code hidden} flip stays here: it is a concurrent set and already atomic.
      */
     private void applyHidePlayers(final Player player, final UUID uuid, final boolean shouldHide) {
         if (shouldHide) {
             if (hidden.add(uuid)) {
                 for (final Player other : Bukkit.getOnlinePlayers()) {
                     if (other != player) {
-                        player.hidePlayer(plugin, other);
+                        other.getScheduler().run(plugin, task -> player.hidePlayer(plugin, other), null);
                     }
                 }
             }
-        } else if (hidden.remove(uuid)) {
+        } else if (!hidden.isEmpty() && hidden.remove(uuid)) {
             for (final Player other : Bukkit.getOnlinePlayers()) {
                 if (other != player) {
-                    player.showPlayer(plugin, other);
+                    other.getScheduler().run(plugin, task -> player.showPlayer(plugin, other), null);
                 }
             }
         }
@@ -666,7 +899,7 @@ public final class MovementListener implements Listener {
         if (raw != null && !raw.isBlank()) {
             final Location target = Locations.parse(messages.expand(joiner, raw));
             if (target != null) {
-                joiner.getScheduler().run(plugin, task -> joiner.teleport(target), null);
+                joiner.getScheduler().run(plugin, task -> joiner.teleportAsync(target), null);
             }
         }
     }

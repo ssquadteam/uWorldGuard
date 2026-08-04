@@ -46,6 +46,16 @@ public final class WorldEditFlagGuard {
         WorldEdit.getInstance().getEventBus().register(this);
     }
 
+    /**
+     * Leaves WorldEdit's event bus. That bus belongs to WorldEdit, not Bukkit, so the
+     * {@code HandlerList} sweep Paper runs when a plugin disables does not reach it: without this a
+     * reload leaves the old guard subscribed, still enforcing against the container it captured and
+     * holding this plugin's classloader alive.
+     */
+    public void unregister() {
+        WorldEdit.getInstance().getEventBus().unregister(this);
+    }
+
     @Subscribe
     public void onEditSession(final EditSessionEvent event) {
         if (event.getStage() != EditSession.Stage.BEFORE_CHANGE) {

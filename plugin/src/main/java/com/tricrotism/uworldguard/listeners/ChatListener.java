@@ -5,6 +5,7 @@ import com.tricrotism.uworldguard.text.Messages;
 import io.papermc.paper.chat.ChatRenderer;
 import io.papermc.paper.event.player.AsyncChatEvent;
 import net.kyori.adventure.text.Component;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -25,6 +26,26 @@ public final class ChatListener implements Listener {
 
     public ChatListener(final ChatTags chatTags) {
         this.chatTags = chatTags;
+    }
+
+    /**
+     * Enforces send-chat / receive-chat ahead of the tag rendering below. Both are read from the
+     * {@link ChatTags} cache rather than resolved here, because this runs on the async chat thread
+     * where a region lookup would be a Bukkit call off the owning region thread.
+     *
+     * <p>A deafened viewer is dropped from the recipient set rather than the message being cancelled,
+     * so one player standing in a quiet region does not silence the message for everyone else.
+     */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onChatRestrictions(final AsyncChatEvent event) {
+        if (!chatTags.anyChatRestrictions()) {
+            return;
+        }
+        if (chatTags.isMuted(event.getPlayer().getUniqueId())) {
+            event.setCancelled(true);
+            return;
+        }
+        event.viewers().removeIf(viewer -> viewer instanceof Player player && chatTags.isDeafened(player.getUniqueId()));
     }
 
     @SuppressWarnings("OverrideOnly")

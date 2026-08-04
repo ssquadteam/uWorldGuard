@@ -3,14 +3,20 @@ package com.tricrotism.uworldguard.listeners;
 import com.tricrotism.uworldguard.config.Bypass;
 import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.flags.Flags;
+import com.tricrotism.uworldguard.region.ApplicableRegionSet;
+import com.tricrotism.uworldguard.region.RegionContainerImpl;
 import com.tricrotism.uworldguard.region.RegionQuery;
 import com.tricrotism.uworldguard.text.MessageService;
+import io.papermc.paper.event.entity.EntityPushedByEntityAttackEvent;
 import org.bukkit.Material;
 import org.bukkit.entity.*;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.entity.*;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityPickupItemEvent;
+import org.bukkit.event.entity.EntityResurrectEvent;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
@@ -23,14 +29,22 @@ import org.jspecify.annotations.NullMarked;
  * {@code disable-throw} (egg / snowball / ender pearl / xp bottle), {@code wind-charge},
  * {@code villager-trade}, and {@code deny-item-drops} / {@code deny-item-pickup}. Each handler
  * filters cheaply and returns fast.
+ *
+ * <p>Every handler that resolves a region set first asks the registry whether any region on the
+ * server sets the flag at all — a bitset test per world. On a server that uses none of these flags
+ * that is the whole cost of the handler: no region resolved, nothing allocated.
  */
 @NullMarked
 public final class ItemUseListener implements Listener {
 
+    private final RegionContainerImpl container;
     private final RegionQuery query;
     private final MessageService messages;
 
-    public ItemUseListener(final RegionQuery query, final MessageService messages) {
+    public ItemUseListener(
+        final RegionContainerImpl container, final RegionQuery query, final MessageService messages
+    ) {
+        this.container = container;
         this.query = query;
         this.messages = messages;
     }
@@ -40,7 +54,7 @@ public final class ItemUseListener implements Listener {
         if (EventGate.disabled(event)) {
             return;
         }
-        if (event.getItem() == null) {
+        if (event.getItem() == null || !container.anyRegionUses(Flags.DISABLE_COMPLETELY)) {
             return;
         }
         final Player player = event.getPlayer();
@@ -60,6 +74,9 @@ public final class ItemUseListener implements Listener {
             return;
         }
         if (!(event.getDamager() instanceof Player player)) {
+            return;
+        }
+        if (!container.anyRegionUses(Flags.DISABLE_COMPLETELY)) {
             return;
         }
         final Material weapon = player.getInventory().getItemInMainHand().getType();
@@ -83,6 +100,9 @@ public final class ItemUseListener implements Listener {
         if (!(event.getEntity() instanceof Player player)) {
             return;
         }
+        if (!container.anyRegionUses(Flags.DISABLE_COMPLETELY)) {
+            return;
+        }
         final EntityEquipment equipment = player.getEquipment();
         final boolean holdingTotem = equipment.getItemInMainHand().getType() == Material.TOTEM_OF_UNDYING
             || equipment.getItemInOffHand().getType() == Material.TOTEM_OF_UNDYING;
@@ -90,6 +110,9 @@ public final class ItemUseListener implements Listener {
             return;
         }
         if (query.getApplicableRegions(player).flagSetContains(Flags.DISABLE_COMPLETELY, Material.TOTEM_OF_UNDYING)) {
+            if (Bypass.has(player)) {
+                return;
+            }
             event.setCancelled(true);
         }
     }
@@ -97,6 +120,9 @@ public final class ItemUseListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onThrow(final ProjectileLaunchEvent event) {
         if (EventGate.disabled(event)) {
+            return;
+        }
+        if (!container.anyRegionUses(Flags.DISABLE_THROW)) {
             return;
         }
         final Projectile projectile = event.getEntity();
@@ -117,13 +143,18 @@ public final class ItemUseListener implements Listener {
         }
     }
 
+    /**
+     * Wind-charge knockback. Listens on Paper's current event rather than Bukkit's
+     * {@code EntityKnockbackByEntityEvent}, which is deprecated for removal — and which Paper warns
+     * about at startup because handling it costs performance. Only the base event declares a handler
+     * list, so registering against this parent still receives every push subclass.
+     */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    @SuppressWarnings({"deprecation", "removal"})
-    public void onWindChargeKnockback(final EntityKnockbackByEntityEvent event) {
+    public void onWindChargeKnockback(final EntityPushedByEntityAttackEvent event) {
         if (EventGate.disabled(event)) {
             return;
         }
-        if (!(event.getSourceEntity() instanceof AbstractWindCharge windCharge)) {
+        if (!(event.getPushedBy() instanceof AbstractWindCharge windCharge)) {
             return;
         }
         final Entity victim = event.getEntity();
@@ -163,9 +194,21 @@ public final class ItemUseListener implements Listener {
         if (EventGate.disabled(event)) {
             return;
         }
+        if (!container.anyRegionUses(Flags.ITEM_DROP) && !container.anyRegionUses(Flags.DENY_ITEM_DROPS)) {
+            return;
+        }
         final Player player = event.getPlayer();
         final Material item = event.getItemDrop().getItemStack().getType();
-        if (query.getApplicableRegions(player).flagSetContains(Flags.DENY_ITEM_DROPS, item)) {
+        final ApplicableRegionSet set = query.getApplicableRegions(player);
+        if (!set.testState(Flags.ITEM_DROP, player.getUniqueId())) {
+            if (Bypass.has(player)) {
+                return;
+            }
+            event.setCancelled(true);
+            messages.sendDeny(player, Flags.ITEM_DROP);
+            return;
+        }
+        if (set.flagSetContains(Flags.DENY_ITEM_DROPS, item)) {
             if (Bypass.has(player)) {
                 return;
             }
@@ -182,8 +225,13 @@ public final class ItemUseListener implements Listener {
         if (!(event.getEntity() instanceof Player player)) {
             return;
         }
+        if (!container.anyRegionUses(Flags.ITEM_PICKUP) && !container.anyRegionUses(Flags.DENY_ITEM_PICKUP)) {
+            return;
+        }
         final Material item = event.getItem().getItemStack().getType();
-        if (query.getApplicableRegions(player).flagSetContains(Flags.DENY_ITEM_PICKUP, item)) {
+        final ApplicableRegionSet set = query.getApplicableRegions(player);
+        if (!set.testState(Flags.ITEM_PICKUP, player.getUniqueId())
+            || set.flagSetContains(Flags.DENY_ITEM_PICKUP, item)) {
             if (Bypass.has(player)) {
                 return;
             }

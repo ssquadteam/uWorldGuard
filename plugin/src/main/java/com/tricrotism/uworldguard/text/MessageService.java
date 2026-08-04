@@ -1,10 +1,12 @@
 package com.tricrotism.uworldguard.text;
 
+import com.tricrotism.uworldguard.config.ConfigUpdater;
 import com.tricrotism.uworldguard.flags.Flag;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
@@ -14,10 +16,7 @@ import org.jspecify.annotations.Nullable;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeSet;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
@@ -39,11 +38,13 @@ public final class MessageService {
     private static final String DENY_KEY = "no-permission";
     private static final String DENY_PREFIX = DENY_KEY + "-";
     private static final Function<UUID, Map<String, AtomicLong>> NEW_MAP = k -> new ConcurrentHashMap<>();
+    private static final Function<Flag<?>, String> DENY_KEY_FOR = flag -> DENY_PREFIX + flag.getName();
 
     private final Plugin plugin;
     private final File file;
     private final Map<String, String> templates = new ConcurrentHashMap<>();
     private final Map<UUID, Map<String, AtomicLong>> lastSent = new ConcurrentHashMap<>();
+    private final Map<Flag<?>, String> denyKeys = new ConcurrentHashMap<>();
     private volatile long cooldownMillis;
     /**
      * Whether any {@code no-permission-<flag>} entry exists; lets {@link #sendDeny} skip building
@@ -57,6 +58,12 @@ public final class MessageService {
         this.file = new File(plugin.getDataFolder(), "messages.yml");
         if (!file.exists()) {
             plugin.saveResource("messages.yml", false);
+        }
+
+        final List<String> added = ConfigUpdater.merge(plugin, file, "messages.yml");
+        if (!added.isEmpty()) {
+            plugin.getLogger().info("messages.yml gained " + added.size()
+                + " new message(s) from this version: " + String.join(", ", added));
         }
         this.placeholderApi = plugin.getServer().getPluginManager().getPlugin("PlaceholderAPI") != null;
         load();
@@ -109,8 +116,41 @@ public final class MessageService {
         save();
     }
 
+    /**
+     * Serialises writes to messages.yml. The file is rewritten whole from {@link #templates}, so two
+     * overlapping saves cannot lose an edit — but they could interleave their writes and leave a torn
+     * document, which this prevents.
+     */
+    private final Object saveLock = new Object();
+
+    /**
+     * Writes the current messages back over the file, editing the document that is already there
+     * rather than composing a fresh one. Building a new {@link YamlConfiguration} meant the first
+     * edit through the settings GUI erased the whole explanatory header and every commented
+     * {@code no-permission-<flag>} example — the file's documentation only survived until someone
+     * used the feature it documented.
+     *
+     * <p>Off-thread, because the callers are not: an edit made through the settings menu arrives as a
+     * chat callback dispatched to the editor's entity scheduler, and re-reading plus rewriting the
+     * document there would block a region tick on two disk operations per keystroke-confirmed edit.
+     * {@code templates} is concurrent, so the async task can read it directly.
+     */
     private void save() {
+        plugin.getServer().getAsyncScheduler().runNow(plugin, task -> {
+            synchronized (saveLock) {
+                writeFile();
+            }
+        });
+    }
+
+    private void writeFile() {
         final YamlConfiguration cfg = new YamlConfiguration();
+        try {
+            cfg.load(file);
+        } catch (final IOException | InvalidConfigurationException e) {
+            plugin.getLogger().log(Level.WARNING,
+                "Could not re-read messages.yml before saving; comments in it will be lost", e);
+        }
         cfg.set("cooldown-seconds", cooldownMillis / 1000L);
         for (final Map.Entry<String, String> entry : templates.entrySet()) {
             cfg.set("messages." + entry.getKey(), entry.getValue());
@@ -144,25 +184,70 @@ public final class MessageService {
     }
 
     /**
+     * Render a keyed message once for broadcasting to several players, or {@code null} when the entry
+     * is disabled. Unlike {@link #send} there is no recipient and no cooldown: the same line goes to
+     * everyone who should see it, so it is built once rather than per receiver, and a throttle keyed
+     * on one of them would silence the others.
+     *
+     * <p>No PlaceholderAPI expansion, because there is no one player to expand against — the subject
+     * of the message is passed in as a resolver by the caller.
+     */
+    public @Nullable Component broadcast(final String key, final TagResolver... resolvers) {
+        final String template = templates.get(key);
+        if (template == null || silenced(template)) {
+            return null;
+        }
+        return render(template, null, resolvers);
+    }
+
+    /**
      * Send the denial message for {@code flag}: the per-flag override {@code no-permission-<flag>}
      * when messages.yml defines one, else the shared {@code no-permission} entry. The two levels
      * disable independently — a per-flag entry of {@code false} silences just that flag while the
      * shared message keeps working elsewhere, and disabling {@code no-permission} silences every
      * flag that has no override of its own.
      *
-     * <p>Cooldown is keyed on whichever entry is used, so overriding a flag also gives it its own
-     * throttle instead of sharing one with every other denial.
+     * <p>Every flag gets its own cooldown, whichever entry supplies the text.
      */
     public void sendDeny(final Player player, final Flag<?> flag) {
-        if (denyOverrides) {
-            final String key = DENY_PREFIX + flag.getName();
-            final String override = templates.get(key);
-            if (override != null) {
-                dispatch(player, key, override);
-                return;
-            }
+        sendDeny(player, flag, null);
+    }
+
+    /**
+     * Same, but a region's own {@code deny-message} takes precedence over both levels when set.
+     * {@code %what%} in it expands to what was refused, as WorldGuard does — so a migrated
+     * "You can't %what% here." reads correctly rather than showing the placeholder verbatim.
+     */
+    public void sendDeny(final Player player, final Flag<?> flag, final @Nullable String regionMessage) {
+        final String cooldownKey = denyKeys.computeIfAbsent(flag, DENY_KEY_FOR);
+        final String override = denyOverrides ? templates.get(cooldownKey) : null;
+        final String configured = override != null ? override : templates.get(DENY_KEY);
+
+        if (regionMessage != null && !regionMessage.isBlank() && !silenced(configured)) {
+            dispatch(player, cooldownKey, regionMessage.replace("%what%", whatOf(flag)));
+            return;
         }
-        dispatch(player, DENY_KEY, templates.get(DENY_KEY));
+        dispatch(player, cooldownKey, configured);
+    }
+
+    private static boolean silenced(final @Nullable String template) {
+        return template != null && (template.isBlank() || "false".equalsIgnoreCase(template));
+    }
+
+    /**
+     * The phrase WorldGuard substitutes for {@code %what%}. Only the flags that can carry a
+     * {@code deny-message} need an entry; anything else falls back to the flag's own name, which still
+     * reads as a sentence ("You can't chest-access here").
+     */
+    private static String whatOf(final Flag<?> flag) {
+        return switch (flag.getName()) {
+            case "build" -> "build";
+            case "block-break", "deny-block-break" -> "break that block";
+            case "block-place", "deny-block-place" -> "place that block";
+            case "interact", "use" -> "use that";
+            case "chest-access" -> "open that";
+            default -> flag.getName();
+        };
     }
 
     /**

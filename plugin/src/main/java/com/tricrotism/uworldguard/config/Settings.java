@@ -34,6 +34,8 @@ public final class Settings {
     private MovementMode movementMode = MovementMode.EVENT;
     private int movementTaskTicks = 4;
 
+    private boolean updateCheck = true;
+
     private boolean sqlEnabled = false;
     private String sqlUrl = "jdbc:sqlite:plugins/uWorldGuard/regions.db";
     private String sqlUser = "";
@@ -57,10 +59,20 @@ public final class Settings {
             wandItem = parsed;
         }
 
+        updateCheck = config.getBoolean("updates.check", updateCheck);
+
         sqlEnabled = config.getBoolean("storage.sql.enabled", sqlEnabled);
         sqlUrl = config.getString("storage.sql.url", sqlUrl);
         sqlUser = config.getString("storage.sql.user", sqlUser);
         sqlPassword = config.getString("storage.sql.password", sqlPassword);
+    }
+
+    public boolean updateCheck() {
+        return updateCheck;
+    }
+
+    public String updateUrl() {
+        return "https://api.github.com/repos/tricrotism/uWorldGuard/releases/latest";
     }
 
     public boolean isSqlEnabled() {

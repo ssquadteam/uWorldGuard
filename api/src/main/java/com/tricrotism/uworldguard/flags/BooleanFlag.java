@@ -14,9 +14,9 @@ public final class BooleanFlag extends Flag<Boolean> {
 
     @Override
     public @Nullable Boolean parse(final String input) {
-        return switch (input.toLowerCase(Locale.ROOT)) {
-            case "true", "yes", "on" -> Boolean.TRUE;
-            case "false", "no", "off" -> Boolean.FALSE;
+        return switch (input.trim().toLowerCase(Locale.ROOT)) {
+            case "true", "yes", "on", "allow" -> Boolean.TRUE;
+            case "false", "no", "off", "deny" -> Boolean.FALSE;
             default -> null;
         };
     }

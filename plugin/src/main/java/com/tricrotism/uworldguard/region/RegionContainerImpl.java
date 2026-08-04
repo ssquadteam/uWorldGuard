@@ -27,25 +27,64 @@ public final class RegionContainerImpl implements RegionContainer {
     private final RegionStore store;
     private final Map<UUID, RegionManager> managers = new ConcurrentHashMap<>();
     private final Set<String> failedLoads = ConcurrentHashMap.newKeySet();
+    /**
+     * One monitor per world, held across its {@link RegionStore#save} call. Three writers can reach
+     * the same world's document — the autosave, the shutdown save, and a world unload — and the YAML
+     * backend stages every write through one fixed temp path per world, so two overlapping saves
+     * interleave their writes and the first move promotes a torn document over the live file. That
+     * file then fails to parse at next boot, which also disables saving for the world. Same shape as
+     * {@code MessageService}'s messages.yml lock.
+     */
+    private final Map<String, Object> saveLocks = new ConcurrentHashMap<>();
 
     public RegionContainerImpl(final Plugin plugin, final RegionStore store) {
         this.plugin = plugin;
         this.store = store;
     }
 
+    /**
+     * Loads every world already present, on the calling thread.
+     *
+     * <p>Blocking is the point. This runs from {@code onEnable}, before the server accepts anyone, so
+     * the I/O costs a moment of startup and nothing else — whereas loading these asynchronously left
+     * a window where {@link #get} answered "no manager" for a world that has regions, and
+     * {@code RegionQuery} cannot tell that apart from wilderness. Worlds that appear later go through
+     * {@link #load}, which has no such luxury.
+     */
     public void loadAll() {
         for (final World world : Bukkit.getWorlds()) {
-            load(world);
+            final RegionManager manager = new RegionManager();
+            final String name = world.getName();
+            try {
+                store.load(name, manager);
+            } catch (final Exception e) {
+                failedLoads.add(name);
+                plugin.getLogger().log(Level.SEVERE, "Failed to load regions for world " + name
+                    + "; saving is disabled for this world to avoid overwriting stored regions.", e);
+            }
+            if (manager.getRegion(GlobalProtectedRegion.ID) == null) {
+                manager.addRegion(new GlobalProtectedRegion());
+            }
+            manager.clearDirty();
+            managers.put(world.getUID(), manager);
+            warnAboutUnenforcedGroups(name, manager);
         }
     }
 
     /**
      * Create (or replace) the manager for a world and populate it asynchronously.
+     *
+     * <p>The manager is published only once it is populated. Publishing the empty one first and
+     * filling it in afterwards left a window — short at startup, but a whole file or query's worth of
+     * latency on a world loaded into a running server — in which every lookup answered "no regions
+     * here", which listeners cannot tell apart from wilderness. For that window the world read as
+     * completely unprotected. Until the load finishes {@link #get} returns {@code null}, which is the
+     * "not loaded" answer callers already handle.
      */
     public RegionManager load(final World world) {
         final RegionManager manager = new RegionManager();
-        managers.put(world.getUID(), manager);
         final String name = world.getName();
+        final UUID uid = world.getUID();
         plugin.getServer().getAsyncScheduler().runNow(plugin, task -> {
             try {
                 store.load(name, manager);
@@ -59,6 +98,7 @@ public final class RegionContainerImpl implements RegionContainer {
                 manager.addRegion(new GlobalProtectedRegion());
             }
             manager.clearDirty();
+            managers.put(uid, manager);
             warnAboutUnenforcedGroups(name, manager);
         });
         return manager;
@@ -85,6 +125,14 @@ public final class RegionContainerImpl implements RegionContainer {
                 + " everyone in the region: " + sb);
         }
 
+        final List<String> groupTrust = FlagGroupSupport.groupTrustRegions(manager);
+        if (!groupTrust.isEmpty()) {
+            plugin.getLogger().warning("World '" + world + "': " + groupTrust.size()
+                + " region(s) trust a permission group as owner/member, which is stored but not"
+                + " enforced — those players are treated as visitors. Add them by name instead: "
+                + String.join(", ", groupTrust));
+        }
+
         final List<String> passthrough = FlagGroupSupport.passthroughRegions(manager);
         if (!passthrough.isEmpty()) {
             plugin.getLogger().info("World '" + world + "': " + passthrough.size()
@@ -96,7 +144,7 @@ public final class RegionContainerImpl implements RegionContainer {
     public void unload(final World world) {
         final RegionManager manager = managers.remove(world.getUID());
         if (manager != null) {
-            saveAsync(world.getName(), manager);
+            saveAsync(world.getName(), manager, () -> {});
         }
     }
 
@@ -107,7 +155,7 @@ public final class RegionContainerImpl implements RegionContainer {
         managers.forEach((uid, manager) -> {
             final World world = Bukkit.getWorld(uid);
             if (world != null && manager.clearDirty()) {
-                saveAsync(world.getName(), manager);
+                saveAsync(world.getName(), manager, manager::markDirty);
             }
         });
     }
@@ -121,15 +169,24 @@ public final class RegionContainerImpl implements RegionContainer {
             if (world == null || failedLoads.contains(world.getName())) {
                 return;
             }
+            final String name = world.getName();
             try {
-                store.save(world.getName(), manager);
+                synchronized (saveLocks.computeIfAbsent(name, k -> new Object())) {
+                    store.save(name, manager);
+                }
             } catch (final Exception e) {
-                plugin.getLogger().log(Level.WARNING, "Failed to save regions for world " + world.getName(), e);
+                plugin.getLogger().log(Level.WARNING, "Failed to save regions for world " + name, e);
             }
         });
     }
 
-    private void saveAsync(final String name, final RegionManager manager) {
+    /**
+     * @param onFailure run when the write throws. The autosave consumes the dirty bit before
+     *                  dispatching — it has to, or edits made while the write is in flight would be
+     *                  cleared by it — so a failed write has to put the bit back, otherwise the world
+     *                  looks clean and is never retried until something else edits it.
+     */
+    private void saveAsync(final String name, final RegionManager manager, final Runnable onFailure) {
         if (failedLoads.contains(name)) {
             plugin.getLogger().warning("Skipping region save for world " + name
                 + ": its regions failed to load and saving would overwrite the stored data.");
@@ -137,8 +194,11 @@ public final class RegionContainerImpl implements RegionContainer {
         }
         plugin.getServer().getAsyncScheduler().runNow(plugin, task -> {
             try {
-                store.save(name, manager);
+                synchronized (saveLocks.computeIfAbsent(name, k -> new Object())) {
+                    store.save(name, manager);
+                }
             } catch (final Exception e) {
+                onFailure.run();
                 plugin.getLogger().log(Level.WARNING, "Failed to save regions for world " + name, e);
             }
         });

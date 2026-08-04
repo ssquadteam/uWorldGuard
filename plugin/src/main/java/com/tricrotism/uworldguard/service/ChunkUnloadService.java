@@ -38,6 +38,11 @@ public final class ChunkUnloadService {
     private final RegionContainerImpl container;
     private final Map<UUID, Set<Long>> ticketed = new ConcurrentHashMap<>();
     private final Map<UUID, Long> signatures = new ConcurrentHashMap<>();
+    /**
+     * Regions already reported as too large to enforce, keyed {@code <world uid>:<region id>} so the
+     * entries can go when their world does — an id alone would outlive every world that used it, and
+     * would also silence the warning for a same-named region in another world.
+     */
     private final Set<String> warned = ConcurrentHashMap.newKeySet();
 
     public ChunkUnloadService(final Plugin plugin, final RegionContainerImpl container) {
@@ -47,7 +52,20 @@ public final class ChunkUnloadService {
 
     public void start() {
         plugin.getServer().getGlobalRegionScheduler()
-            .runAtFixedRate(plugin, task -> reconcile(), PERIOD_TICKS, PERIOD_TICKS);
+            .runAtFixedRate(plugin, _ -> reconcile(), PERIOD_TICKS, PERIOD_TICKS);
+    }
+
+    /**
+     * Forgets a world's ticket bookkeeping when it unloads. The server drops the real tickets with
+     * the world, but {@code ticketed} would go on claiming they exist and {@code signatures} would go
+     * on matching — so if that world were loaded again the reconcile would decide there was nothing
+     * to do and chunk-unload would quietly stop being enforced there for the rest of the session.
+     */
+    public void forget(final World world) {
+        final UUID uid = world.getUID();
+        ticketed.remove(uid);
+        signatures.remove(uid);
+        warned.removeIf(key -> key.startsWith(uid + ":"));
     }
 
     private void reconcile() {
@@ -66,7 +84,7 @@ public final class ChunkUnloadService {
                 continue;
             }
 
-            final Set<Long> desired = desiredChunks(manager);
+            final Set<Long> desired = desiredChunks(uid, manager);
             final Set<Long> current = ticketed.getOrDefault(uid, Set.of());
 
             for (final long key : desired) {
@@ -111,7 +129,7 @@ public final class ChunkUnloadService {
         return signature;
     }
 
-    private Set<Long> desiredChunks(final RegionManager manager) {
+    private Set<Long> desiredChunks(final UUID uid, final RegionManager manager) {
         final Set<Long> chunks = new HashSet<>();
         for (final ProtectedRegion region : manager.getRegions()) {
             if (region.getType() == RegionType.GLOBAL || region.getFlag(Flags.CHUNK_UNLOAD) != State.DENY) {
@@ -125,7 +143,7 @@ public final class ChunkUnloadService {
             final int czMax = max.z() >> 4;
             final long span = (long) (cxMax - cxMin + 1) * (czMax - czMin + 1);
             if (span > MAX_CHUNKS_PER_REGION) {
-                if (warned.add(region.getId())) {
+                if (warned.add(uid + ":" + region.getId())) {
                     plugin.getLogger().warning("Region '" + region.getId() + "' spans " + span
                         + " chunks (> " + MAX_CHUNKS_PER_REGION + "); chunk-unload not enforced for it.");
                 }

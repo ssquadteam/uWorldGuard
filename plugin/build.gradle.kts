@@ -76,6 +76,11 @@ tasks {
         jvmArgs("-Xms2G", "-Xmx2G")
     }
 
+    runPaper.folia.registerTask {
+        minecraftVersion(libs.versions.minecraft.get())
+        jvmArgs("-Xms2G", "-Xmx2G")
+    }
+
     processResources {
         val props = mapOf(
             "version" to version.toString(),

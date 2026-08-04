@@ -54,6 +54,28 @@ public final class RegionManager {
         invalidateChunkIndex();
     }
 
+    /**
+     * Add {@code region} only if its id is free, returning the region already holding that id — or
+     * {@code null} on success. For the {@code define} commands, where checking with {@link #hasRegion}
+     * and then calling {@link #addRegion} leaves a window: two admins defining the same name from
+     * different region threads both pass the check, and the second put silently replaces the first
+     * region's bounds, owners and flags while telling both of them it was created.
+     */
+    public @Nullable ProtectedRegion addRegionIfAbsent(final ProtectedRegion region) {
+        final ProtectedRegion existing =
+            regions.putIfAbsent(region.getId().toLowerCase(Locale.ROOT), region);
+        if (existing != null) {
+            return existing;
+        }
+        if (region instanceof GlobalProtectedRegion g) {
+            global = g;
+        }
+        dirty.set(true);
+        flagIndexStale = true;
+        invalidateChunkIndex();
+        return null;
+    }
+
     public @Nullable ProtectedRegion removeRegion(final String id) {
         final ProtectedRegion removed = regions.remove(id.toLowerCase(Locale.ROOT));
         if (removed != null) {
@@ -254,12 +276,19 @@ public final class RegionManager {
 
     /**
      * Cached no-match result. Most queries hit unprotected wilderness, so the empty set is
-     * reused instead of allocated per event; it is rebuilt only when the global region changes.
+     * reused instead of allocated per event.
+     *
+     * <p>Rebuilt when the global region changes <em>or</em> when the world's group-qualifier state
+     * flips. A set snapshots {@code groupsInUse} at construction, and the empty set is the one place
+     * that snapshot can outlive the fact: with no applicable regions the only value left to resolve
+     * is the global region's, so a qualifier added to it afterwards would be ignored in wilderness
+     * for as long as the cached set survived.
      */
     private ApplicableRegionSet emptySet() {
         final GlobalProtectedRegion g = global;
+        final boolean groups = anyFlagGroups();
         ApplicableRegionSet cached = emptySet;
-        if (cached == null || cached.globalRegion() != g) {
+        if (cached == null || cached.globalRegion() != g || cached.usesGroups() != groups) {
             cached = new ApplicableRegionSet(List.of(), g, this);
             emptySet = cached;
         }

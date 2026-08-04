@@ -17,6 +17,8 @@ import com.tricrotism.uworldguard.text.Messages;
 import com.tricrotism.uworldguard.util.BlockVector3;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
+import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -185,7 +187,7 @@ public final class RegionCommands {
         }
 
         if (regionManager.hasRegion(id)) {
-            error(sender, "A region named <aqua>" + id + "</aqua> already exists.");
+            error(sender, "A region named <aqua><id></aqua> already exists.", Placeholder.unparsed("id", id));
             return;
         }
 
@@ -280,16 +282,27 @@ public final class RegionCommands {
         }
     }
 
+    /**
+     * The single point every {@code define*} command funnels through, so the id is validated once
+     * however the region was shaped.
+     */
     private void create(
         final Source sender, final RegionManager regionManager, final ProtectedRegion region
     ) {
-        if (regionManager.hasRegion(region.getId())) {
-            error(sender, "A region named <aqua>" + region.getId() + "</aqua> already exists.");
+        if (!ProtectedRegion.isValidId(region.getId())) {
+            error(sender, "Region names may only use letters, digits, <aqua>_</aqua> and "
+                    + "<aqua>-</aqua>, up to <aqua><max></aqua> characters.",
+                Placeholder.unparsed("max", Integer.toString(ProtectedRegion.MAX_ID_LENGTH)));
+            return;
+        }
+        if (regionManager.addRegionIfAbsent(region) != null) {
+            error(sender, "A region named <aqua><id></aqua> already exists.",
+                Placeholder.unparsed("id", region.getId()));
             return;
         }
 
-        regionManager.addRegion(region);
-        success(sender, "Created region <aqua>" + region.getId() + "</aqua>.");
+        success(sender, "Created region <aqua><id></aqua>.",
+            Placeholder.unparsed("id", region.getId()));
     }
 
     @Command("uworldguard|uwg|worldguard|wg remove <id>")
@@ -305,11 +318,11 @@ public final class RegionCommands {
         }
 
         if (regionManager.removeRegion(id) == null) {
-            error(sender, "No region named <aqua>" + id + "</aqua>.");
+            error(sender, "No region named <aqua><id></aqua>.", Placeholder.unparsed("id", id));
             return;
         }
 
-        success(sender, "Removed region <aqua>" + id + "</aqua>.");
+        success(sender, "Removed region <aqua><id></aqua>.", Placeholder.unparsed("id", id));
     }
 
     /**
@@ -436,10 +449,11 @@ public final class RegionCommands {
         if (player == null) return;
 
         if (Bypass.toggle(player)) {
-            success(sender, "Bypass <green>on</green> — region protections no longer apply to you.");
+            success(sender, "Bypass <green>on</green>, region protections no longer apply to you. "
+                + "It turns itself off when you log out.");
         } else {
-            note(sender, "Bypass <red>off</red> — you are treated as an ordinary player. "
-                + "Run <aqua>/uwg bypass</aqua> again to restore it.");
+            note(sender, "Bypass <red>off</red>, you are treated as an ordinary player. "
+                + "Run <aqua>/uwg bypass</aqua> again to turn it back on.");
         }
     }
 
@@ -452,7 +466,7 @@ public final class RegionCommands {
 
         final ProtectedRegion region = regionManager.getRegion(id);
         if (region == null) {
-            error(sender, "No region named <aqua>" + id + "</aqua>.");
+            error(sender, "No region named <aqua><id></aqua>.", Placeholder.unparsed("id", id));
             return;
         }
 
@@ -500,13 +514,13 @@ public final class RegionCommands {
 
         final ProtectedRegion region = regionManager.getRegion(id);
         if (region == null) {
-            error(sender, "No region named <aqua>" + id + "</aqua>.");
+            error(sender, "No region named <aqua><id></aqua>.", Placeholder.unparsed("id", id));
             return;
         }
 
         final Flag<?> flag = Flags.get(flagName);
         if (flag == null) {
-            error(sender, "Unknown flag <aqua>" + flagName + "</aqua>.");
+            error(sender, "Unknown flag <aqua><flag></aqua>.", Placeholder.unparsed("flag", flagName));
             return;
         }
 
@@ -514,7 +528,7 @@ public final class RegionCommands {
             region.setFlag(flag, null);
             region.setFlagGroup(flag, null);
             regionManager.markDirty();
-            success(sender, "Cleared flag <aqua>" + flag.getName() + "</aqua>.");
+            success(sender, "Cleared flag <aqua><flag></aqua>.", Placeholder.unparsed("flag", flag.getName()));
             return;
         }
 
@@ -522,14 +536,15 @@ public final class RegionCommands {
         if (groupName != null) {
             group = RegionGroup.parse(groupName);
             if (group == null) {
-                error(sender, "Unknown group <aqua>" + groupName + "</aqua>. Use one of: "
-                    + "all, members, owners, nonmembers, nonowners, none.");
+                error(sender, "Unknown group <aqua><group></aqua>. Use one of: "
+                        + "all, members, owners, nonmembers, nonowners, none.",
+                    Placeholder.unparsed("group", groupName));
                 return;
             }
         }
 
         if (!applyFlag(region, flag, value)) {
-            error(sender, "Invalid value for flag <aqua>" + flag.getName() + "</aqua>.");
+            error(sender, "Invalid value for flag <aqua><flag></aqua>.", Placeholder.unparsed("flag", flag.getName()));
             return;
         }
         if (groupName != null) {
@@ -537,9 +552,12 @@ public final class RegionCommands {
         }
 
         regionManager.markDirty();
-        success(sender, "Set flag <aqua>" + flag.getName() + "</aqua> to <aqua>" + value + "</aqua>"
-            + (group != null && group != RegionGroup.ALL
-            ? " for <aqua>" + group.serialized() + "</aqua>" : "") + ".");
+        final boolean qualified = group != null && group != RegionGroup.ALL;
+        success(sender, "Set flag <aqua><flag></aqua> to <aqua><value></aqua>"
+                + (qualified ? " for <aqua><group></aqua>" : "") + ".",
+            Placeholder.unparsed("flag", flag.getName()),
+            Placeholder.unparsed("value", value),
+            Placeholder.unparsed("group", qualified ? group.serialized() : ""));
     }
 
     @Suggestions("flag-groups")
@@ -560,13 +578,14 @@ public final class RegionCommands {
 
         final ProtectedRegion region = regionManager.getRegion(id);
         if (region == null) {
-            error(sender, "No region named <aqua>" + id + "</aqua>.");
+            error(sender, "No region named <aqua><id></aqua>.", Placeholder.unparsed("id", id));
             return;
         }
 
         region.setPriority(priority);
         regionManager.markDirty();
-        success(sender, "Set priority of <aqua>" + id + "</aqua> to <aqua>" + priority + "</aqua>.");
+        success(sender, "Set priority of <aqua><id></aqua> to <aqua><priority></aqua>.",
+            Placeholder.unparsed("id", id), Placeholder.unparsed("priority", Integer.toString(priority)));
     }
 
     @Command("uworldguard|uwg|worldguard|wg setparent <id> [parent]")
@@ -582,20 +601,20 @@ public final class RegionCommands {
 
         final ProtectedRegion region = regionManager.getRegion(id);
         if (region == null) {
-            error(sender, "No region named <aqua>" + id + "</aqua>.");
+            error(sender, "No region named <aqua><id></aqua>.", Placeholder.unparsed("id", id));
             return;
         }
 
         if (parentId == null) {
             region.setParent(null);
             regionManager.markDirty();
-            success(sender, "Cleared the parent of <aqua>" + id + "</aqua>.");
+            success(sender, "Cleared the parent of <aqua><id></aqua>.", Placeholder.unparsed("id", id));
             return;
         }
 
         final ProtectedRegion parent = regionManager.getRegion(parentId);
         if (parent == null) {
-            error(sender, "No region named <aqua>" + parentId + "</aqua>.");
+            error(sender, "No region named <aqua><id></aqua>.", Placeholder.unparsed("id", parentId));
             return;
         }
 
@@ -607,7 +626,8 @@ public final class RegionCommands {
         }
 
         regionManager.markDirty();
-        success(sender, "Set parent of <aqua>" + id + "</aqua> to <aqua>" + parentId + "</aqua>.");
+        success(sender, "Set parent of <aqua><id></aqua> to <aqua><parent></aqua>.",
+            Placeholder.unparsed("id", id), Placeholder.unparsed("parent", parentId));
     }
 
     @Command("uworldguard|uwg|worldguard|wg removeparent|unsetparent <id>")
@@ -622,18 +642,18 @@ public final class RegionCommands {
 
         final ProtectedRegion region = regionManager.getRegion(id);
         if (region == null) {
-            error(sender, "No region named <aqua>" + id + "</aqua>.");
+            error(sender, "No region named <aqua><id></aqua>.", Placeholder.unparsed("id", id));
             return;
         }
 
         if (region.getParent() == null) {
-            error(sender, "Region <aqua>" + id + "</aqua> has no parent.");
+            error(sender, "Region <aqua><id></aqua> has no parent.", Placeholder.unparsed("id", id));
             return;
         }
 
         region.setParent(null);
         regionManager.markDirty();
-        success(sender, "Cleared the parent of <aqua>" + id + "</aqua>.");
+        success(sender, "Cleared the parent of <aqua><id></aqua>.", Placeholder.unparsed("id", id));
     }
 
     @Command("uworldguard|uwg|worldguard|wg menu")
@@ -668,7 +688,7 @@ public final class RegionCommands {
     public void reload(final Source sender) {
         messages.reload();
         plugin.reloadSettings();
-        success(sender, "Reloaded messages, config, and movement mode. "
+        success(sender, "Reloaded messages, config, movement mode, and autosave interval. "
             + "<gray>(Storage backend and wand item still need a restart.)");
     }
 
@@ -687,7 +707,7 @@ public final class RegionCommands {
 
         final ProtectedRegion region = regionManager.getRegion(id);
         if (region == null) {
-            error(sender, "No region named <aqua>" + id + "</aqua>.");
+            error(sender, "No region named <aqua><id></aqua>.", Placeholder.unparsed("id", id));
             return;
         }
 
@@ -746,12 +766,21 @@ public final class RegionCommands {
 
         final ProtectedRegion region = regionManager.getRegion(id);
         if (region == null) {
-            error(sender, "No region named <aqua>" + id + "</aqua>.");
+            error(sender, "No region named <aqua><id></aqua>.", Placeholder.unparsed("id", id));
             return;
         }
 
         plugin.getServer().getAsyncScheduler().runNow(plugin, task -> {
             final OfflinePlayer target = Bukkit.getOfflinePlayer(playerName);
+            if (add && !target.isOnline() && !target.hasPlayedBefore()) {
+                error(sender, "No player named <aqua><player></aqua> has played here.",
+                    Placeholder.unparsed("player", playerName));
+                return;
+            }
+            if (regionManager.getRegion(id) != region) {
+                error(sender, "No region named <aqua><id></aqua>.", Placeholder.unparsed("id", id));
+                return;
+            }
             final UUID uuid = target.getUniqueId();
             final DefaultDomain domain = owner ? region.getOwners() : region.getMembers();
             if (add) {
@@ -761,11 +790,20 @@ public final class RegionCommands {
             }
 
             regionManager.markDirty();
-            success(sender, (add ? "Added " : "Removed ") + "<aqua>" + playerName + "</aqua> "
-                + (add ? "to" : "from") + " " + (owner ? "owners" : "members") + " of <aqua>" + id + "</aqua>.");
+            success(sender, (add ? "Added " : "Removed ") + "<aqua><player></aqua> "
+                    + (add ? "to" : "from") + " " + (owner ? "owners" : "members")
+                    + " of <aqua><id></aqua>.",
+                Placeholder.unparsed("player", playerName),
+                Placeholder.unparsed("id", id));
         });
     }
 
+    /**
+     * Suggestions are filtered against what has been typed rather than returned whole. A completion
+     * request arrives on every keystroke, so on a world with many thousands of regions the unfiltered
+     * form allocated a string per region per key pressed; matching here makes the cost scale with the
+     * answer instead of with the world.
+     */
     @Suggestions("region-ids")
     public List<String> suggestRegionIds(final CommandContext<Source> ctx, final String input) {
         if (!(ctx.sender().source() instanceof Player player)) return List.of();
@@ -773,27 +811,38 @@ public final class RegionCommands {
         final RegionManager regionManager = container.get(player.getWorld());
         if (regionManager == null) return List.of();
 
+        final String prefix = input.toLowerCase(Locale.ROOT);
         final List<String> ids = new ArrayList<>();
         for (final ProtectedRegion region : regionManager.getRegions()) {
-            ids.add(region.getId());
+            final String id = region.getId();
+            if (id.toLowerCase(Locale.ROOT).startsWith(prefix)) {
+                ids.add(id);
+            }
         }
         return ids;
     }
 
     @Suggestions("flags")
     public List<String> suggestFlags(final CommandContext<Source> ctx, final String input) {
-        final List<String> names = new ArrayList<>(Flags.all().size());
+        final String prefix = input.toLowerCase(Locale.ROOT);
+        final List<String> names = new ArrayList<>();
         for (final Flag<?> flag : Flags.all()) {
-            names.add(flag.getName());
+            if (flag.getName().startsWith(prefix)) {
+                names.add(flag.getName());
+            }
         }
         return names;
     }
 
     @Suggestions("players")
     public List<String> suggestPlayers(final CommandContext<Source> ctx, final String input) {
+        final String prefix = input.toLowerCase(Locale.ROOT);
         final List<String> names = new ArrayList<>();
         for (final Player online : plugin.getServer().getOnlinePlayers()) {
-            names.add(online.getName());
+            final String name = online.getName();
+            if (name.toLowerCase(Locale.ROOT).startsWith(prefix)) {
+                names.add(name);
+            }
         }
         return names;
     }
@@ -847,15 +896,21 @@ public final class RegionCommands {
         return null;
     }
 
-    private static void error(final Source sender, final String message) {
-        sender.source().sendMessage(Messages.format("<red>" + message));
+    /**
+     * The three senders take resolvers rather than an interpolated string on purpose: ids, flag
+     * names and flag values all arrive from the command line, and pasting them into a MiniMessage
+     * template would let the sender's own input open tags in the reply. {@code <id>} and friends in
+     * the templates below are placeholders filled by {@link Placeholder#unparsed}, never markup.
+     */
+    private static void error(final Source sender, final String message, final TagResolver... resolvers) {
+        sender.source().sendMessage(Messages.format("<red>" + message, resolvers));
     }
 
-    private static void success(final Source sender, final String message) {
-        sender.source().sendMessage(Messages.format("<green>" + message));
+    private static void success(final Source sender, final String message, final TagResolver... resolvers) {
+        sender.source().sendMessage(Messages.format("<green>" + message, resolvers));
     }
 
-    private static void note(final Source sender, final String message) {
-        sender.source().sendMessage(Messages.format("<gray>" + message));
+    private static void note(final Source sender, final String message, final TagResolver... resolvers) {
+        sender.source().sendMessage(Messages.format("<gray>" + message, resolvers));
     }
 }

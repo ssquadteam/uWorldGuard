@@ -8,7 +8,7 @@
 # differently for one flag, add "no-permission-<flag>" — the per-flag entry wins over the shared
 # one. The two disable independently: set a per-flag entry to false to silence only that flag,
 # or disable no-permission itself to silence every flag that has no override of its own.
-# Cooldown applies to whichever entry is used, so an overridden flag gets its own throttle.
+# Cooldown is tracked separately per flag, so one flag going quiet never silences another.
 #
 # Flags that can send a denial:
 #   block-break, block-place, interact, chest-access, end-crystal-place, end-crystal-interact,
@@ -24,3 +24,9 @@ messages:
     # no-permission-block-break: false
     entry-denied: "<red>You cannot enter this area."
     exit-denied: "<red>You cannot leave this area."
+    # Shown when player-count-limit refuses entry. <count> is how many are inside, <limit> the cap.
+    region-full: "<red>This area is full (<count>/<limit>)."
+    # Announced to staff holding uworldguard.notify when the notify-enter / notify-leave flags are
+    # set on a region. <player> is who crossed, <region> the region they crossed into or out of.
+    notify-enter: "<gray>[<aqua>uWG</aqua>] <white><player></white> entered <aqua><region>"
+    notify-leave: "<gray>[<aqua>uWG</aqua>] <white><player></white> left <aqua><region>"

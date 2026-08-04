@@ -3,10 +3,11 @@ package com.tricrotism.uworldguard.flags;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
-import java.util.LinkedHashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Registry of all flags. The built-in constants mirror WorldGuard's flag set so stored
@@ -21,7 +22,8 @@ import java.util.Map;
 @NullMarked
 public final class Flags {
 
-    private static final Map<String, Flag<?>> REGISTRY = new LinkedHashMap<>();
+    private static final Map<String, Flag<?>> BY_NAME = new ConcurrentHashMap<>();
+    private static volatile List<Flag<?>> ordered = List.of();
 
     // Protection.
     public static final StateFlag BUILD = register(FlagCategory.PROTECTION, new StateFlag("build", true));
@@ -51,6 +53,24 @@ public final class Flags {
         register(FlagCategory.PROTECTION, new StateFlag("entity-item-frame-destroy", true));
     public static final StateFlag ENTITY_PAINTING_DESTROY =
         register(FlagCategory.PROTECTION, new StateFlag("entity-painting-destroy", true));
+    public static final StateFlag VEHICLE_PLACE = register(FlagCategory.PROTECTION, new StateFlag("vehicle-place", true));
+    public static final StateFlag VEHICLE_DESTROY = register(FlagCategory.PROTECTION, new StateFlag("vehicle-destroy", true));
+    public static final StateFlag POTION_SPLASH = register(FlagCategory.PROTECTION, new StateFlag("potion-splash", true));
+    public static final StateFlag FIREWORK_DAMAGE = register(FlagCategory.PROTECTION, new StateFlag("firework-damage", true));
+    public static final StateFlag USE_ANVIL = register(FlagCategory.PROTECTION, new StateFlag("use-anvil", true));
+    public static final StateFlag RESPAWN_ANCHORS = register(FlagCategory.PROTECTION, new StateFlag("respawn-anchors", true));
+    public static final StateFlag USE_DRIPLEAF = register(FlagCategory.PROTECTION, new StateFlag("use-dripleaf", true));
+    public static final StateFlag SIGN_EDIT = register(FlagCategory.PROTECTION, new StateFlag("sign-edit", true));
+    public static final StateFlag TNT_PRIME = register(FlagCategory.PROTECTION, new StateFlag("tnt-prime", true));
+    public static final StateFlag ARMOR_STAND_MANIPULATE = register(FlagCategory.PROTECTION, new StateFlag("armor-stand-manipulate", true));
+    public static final StateFlag MANNEQUIN_MANIPULATE = register(FlagCategory.PROTECTION, new StateFlag("mannequin-manipulate", true));
+    public static final StateFlag VAULT_USE = register(FlagCategory.PROTECTION, new StateFlag("vault-use", true));
+    public static final StateFlag BUCKET_ENTITY = register(FlagCategory.PROTECTION, new StateFlag("bucket-entity", true));
+    public static final StateFlag SHEAR = register(FlagCategory.PROTECTION, new StateFlag("shear", true));
+    public static final StateFlag LEASH = register(FlagCategory.PROTECTION, new StateFlag("leash", true));
+    public static final StateFlag NAME_ENTITY = register(FlagCategory.PROTECTION, new StateFlag("name-entity", true));
+    public static final StateFlag FLOWER_POT = register(FlagCategory.PROTECTION, new StateFlag("flower-pot", true));
+    public static final StateFlag LECTERN = register(FlagCategory.PROTECTION, new StateFlag("lectern", true));
     public static final StateFlag ENTRY = register(FlagCategory.ENTRY, new StateFlag("entry", true));
     public static final StateFlag EXIT = register(FlagCategory.ENTRY, new StateFlag("exit", true));
 
@@ -61,6 +81,19 @@ public final class Flags {
     public static final StateFlag OTHER_EXPLOSION = register(FlagCategory.MOBS, new StateFlag("other-explosion", true));
     public static final StateFlag ENDERMAN_GRIEF = register(FlagCategory.MOBS, new StateFlag("enderman-grief", true));
     public static final StateFlag GHAST_FIREBALL = register(FlagCategory.MOBS, new StateFlag("ghast-fireball", true));
+    public static final StateFlag WITHER_DAMAGE = register(FlagCategory.MOBS, new StateFlag("wither-damage", true));
+    public static final StateFlag ENDERDRAGON_BLOCK_DAMAGE = register(FlagCategory.MOBS, new StateFlag("enderdragon-block-damage", true));
+    public static final StateFlag RAVAGER_GRIEF = register(FlagCategory.MOBS, new StateFlag("ravager-grief", true));
+    public static final StateFlag SNOWMAN_TRAILS = register(FlagCategory.MOBS, new StateFlag("snowman-trails", true));
+    public static final StateFlag BREEZE_CHARGE_EXPLOSION = register(FlagCategory.MOBS, new StateFlag("breeze-charge-explosion", true));
+    public static final StateFlag LIGHTNING = register(FlagCategory.MOBS, new StateFlag("lightning", true));
+    public static final EntityTypeSetFlag DENY_SPAWN = register(FlagCategory.MOBS, new EntityTypeSetFlag("deny-spawn"));
+    public static final StateFlag RAID = register(FlagCategory.MOBS, new StateFlag("raid", true));
+    public static final StateFlag ENTITY_TRANSFORM = register(FlagCategory.MOBS, new StateFlag("entity-transform", true));
+    public static final StateFlag BREED = register(FlagCategory.MOBS, new StateFlag("breed", true));
+    public static final StateFlag TAME = register(FlagCategory.MOBS, new StateFlag("tame", true));
+    public static final StateFlag DOOR_BREAK = register(FlagCategory.MOBS, new StateFlag("door-break", true));
+    public static final StateFlag COPPER_GOLEM = register(FlagCategory.MOBS, new StateFlag("copper-golem", true));
 
     // Natural events.
     public static final StateFlag FIRE_SPREAD = register(FlagCategory.ENVIRONMENT, new StateFlag("fire-spread", true));
@@ -76,15 +109,35 @@ public final class Flags {
     public static final StateFlag VINE_GROWTH = register(FlagCategory.ENVIRONMENT, new StateFlag("vine-growth", true));
     public static final StateFlag CROP_TRAMPLE = register(FlagCategory.ENVIRONMENT, new StateFlag("crop-trample", true));
     public static final StateFlag FROSTWALKER = register(FlagCategory.ENVIRONMENT, new StateFlag("frostwalker", true));
+    public static final StateFlag FROSTED_ICE_MELT = register(FlagCategory.ENVIRONMENT, new StateFlag("frosted-ice-melt", true));
+    public static final StateFlag GRASS_GROWTH = register(FlagCategory.ENVIRONMENT, new StateFlag("grass-growth", true));
+    public static final StateFlag MYCELIUM_SPREAD = register(FlagCategory.ENVIRONMENT, new StateFlag("mycelium-spread", true));
+    public static final StateFlag MUSHROOM_GROWTH = register(FlagCategory.ENVIRONMENT, new StateFlag("mushroom-growth", true));
+    public static final StateFlag SCULK_GROWTH = register(FlagCategory.ENVIRONMENT, new StateFlag("sculk-growth", true));
+    public static final StateFlag ROCK_GROWTH = register(FlagCategory.ENVIRONMENT, new StateFlag("rock-growth", true));
+    public static final StateFlag CORAL_FADE = register(FlagCategory.ENVIRONMENT, new StateFlag("coral-fade", true));
+    public static final StateFlag COPPER_FADE = register(FlagCategory.ENVIRONMENT, new StateFlag("copper-fade", true));
+    public static final StateFlag MOISTURE_CHANGE = register(FlagCategory.ENVIRONMENT, new StateFlag("moisture-change", true));
+    public static final StateFlag SOIL_DRY = register(FlagCategory.ENVIRONMENT, new StateFlag("soil-dry", true));
+    public static final StateFlag TREE_GROWTH = register(FlagCategory.ENVIRONMENT, new StateFlag("tree-growth", true));
+    public static final StateFlag SPONGE_ABSORB = register(FlagCategory.ENVIRONMENT, new StateFlag("sponge-absorb", true));
     public static final StateFlag CHUNK_UNLOAD = register(FlagCategory.ENVIRONMENT, new StateFlag("chunk-unload", true));
 
     // Movement & teleport.
     public static final StateFlag ENDERPEARL = register(FlagCategory.MOVEMENT, new StateFlag("enderpearl", true));
     public static final StateFlag CHORUS_TELEPORT = register(FlagCategory.MOVEMENT, new StateFlag("chorus-fruit-teleport", true));
+    public static final StateFlag PORTAL_CREATE = register(FlagCategory.MOVEMENT, new StateFlag("portal-create", true));
 
     // Messages & effects.
     public static final StringFlag GREETING = register(FlagCategory.MESSAGES, new StringFlag("greeting"));
     public static final StringFlag FAREWELL = register(FlagCategory.MESSAGES, new StringFlag("farewell"));
+    public static final StringFlag GREETING_TITLE = register(FlagCategory.MESSAGES, new StringFlag("greeting-title"));
+    public static final StringFlag FAREWELL_TITLE = register(FlagCategory.MESSAGES, new StringFlag("farewell-title"));
+    public static final StringFlag DENY_MESSAGE = register(FlagCategory.MESSAGES, new StringFlag("deny-message"));
+    public static final BooleanFlag NOTIFY_ENTER = register(FlagCategory.MESSAGES, new BooleanFlag("notify-enter"));
+    public static final BooleanFlag NOTIFY_LEAVE = register(FlagCategory.MESSAGES, new BooleanFlag("notify-leave"));
+    public static final StateFlag SEND_CHAT = register(FlagCategory.MESSAGES, new StateFlag("send-chat", true));
+    public static final StateFlag RECEIVE_CHAT = register(FlagCategory.MESSAGES, new StateFlag("receive-chat", true));
     public static final StringFlag CHAT_PREFIX = register(FlagCategory.MESSAGES, new StringFlag("chat-prefix"));
     public static final StringFlag CHAT_SUFFIX = register(FlagCategory.MESSAGES, new StringFlag("chat-suffix"));
     public static final StringFlag ENTRY_DENY_MESSAGE = register(FlagCategory.MESSAGES, new StringFlag("entry-deny-message"));
@@ -97,6 +150,15 @@ public final class Flags {
     public static final PotionEffectSetFlag GIVE_EFFECTS = register(FlagCategory.PLAYER, new PotionEffectSetFlag("give-effects"));
     public static final PotionEffectSetFlag BLOCKED_EFFECTS = register(FlagCategory.PLAYER, new PotionEffectSetFlag("blocked-effects"));
     public static final BooleanFlag HIDE_PLAYERS = register(FlagCategory.PLAYER, new BooleanFlag("hide-players"));
+    public static final StateFlag NATURAL_HEALTH_REGEN = register(FlagCategory.PLAYER, new StateFlag("natural-health-regen", true));
+    public static final StateFlag NATURAL_HUNGER_DRAIN = register(FlagCategory.PLAYER, new StateFlag("natural-hunger-drain", true));
+    public static final IntegerFlag HEAL_DELAY = register(FlagCategory.PLAYER, new IntegerFlag("heal-delay"));
+    public static final IntegerFlag FEED_DELAY = register(FlagCategory.PLAYER, new IntegerFlag("feed-delay"));
+    public static final IntegerFlag FEED_AMOUNT = register(FlagCategory.PLAYER, new IntegerFlag("feed-amount"));
+    public static final IntegerFlag MIN_FOOD = register(FlagCategory.PLAYER, new IntegerFlag("min-food"));
+    public static final IntegerFlag MAX_FOOD = register(FlagCategory.PLAYER, new IntegerFlag("max-food"));
+    public static final StringFlag TIME_LOCK = register(FlagCategory.PLAYER, new StringFlag("time-lock"));
+    public static final StringFlag WEATHER_LOCK = register(FlagCategory.PLAYER, new StringFlag("weather-lock"));
 
     // Item-use control.
     public static final MaterialSetFlag DISABLE_COMPLETELY = register(FlagCategory.ITEMS, new MaterialSetFlag("disable-completely"));
@@ -107,6 +169,14 @@ public final class Flags {
     public static final StateFlag INVENTORY_CRAFT = register(FlagCategory.ITEMS, new StateFlag("inventory-craft", true));
     public static final MaterialSetFlag DENY_ITEM_DROPS = register(FlagCategory.ITEMS, new MaterialSetFlag("deny-item-drops"));
     public static final MaterialSetFlag DENY_ITEM_PICKUP = register(FlagCategory.ITEMS, new MaterialSetFlag("deny-item-pickup"));
+    public static final StateFlag ITEM_DROP = register(FlagCategory.ITEMS, new StateFlag("item-drop", true));
+    public static final StateFlag ITEM_PICKUP = register(FlagCategory.ITEMS, new StateFlag("item-pickup", true));
+    public static final StateFlag CRAFTER = register(FlagCategory.ITEMS, new StateFlag("crafter", true));
+    public static final StateFlag HOPPER_TRANSFER = register(FlagCategory.ITEMS, new StateFlag("hopper-transfer", true));
+    public static final StateFlag DISPENSE = register(FlagCategory.ITEMS, new StateFlag("dispense", true));
+    public static final StateFlag ENCHANT = register(FlagCategory.ITEMS, new StateFlag("enchant", true));
+    public static final StateFlag BREW = register(FlagCategory.ITEMS, new StateFlag("brew", true));
+    public static final StateFlag SMELT = register(FlagCategory.ITEMS, new StateFlag("smelt", true));
 
     // Fine-grained block control. deny-* blacklists materials (even for members); allow-* permits
     // materials, overriding region build protection.
@@ -119,6 +189,8 @@ public final class Flags {
     public static final StringFlag ENTRY_MIN_LEVEL = register(FlagCategory.ENTRY, new StringFlag("entry-min-level"));
     public static final StringFlag ENTRY_MAX_LEVEL = register(FlagCategory.ENTRY, new StringFlag("entry-max-level"));
     public static final IntegerFlag PLAYER_COUNT_LIMIT = register(FlagCategory.ENTRY, new IntegerFlag("player-count-limit"));
+    public static final BooleanFlag EXIT_OVERRIDE = register(FlagCategory.ENTRY, new BooleanFlag("exit-override"));
+    public static final StateFlag EXIT_VIA_TELEPORT = register(FlagCategory.ENTRY, new StateFlag("exit-via-teleport", true));
 
     // Enter/leave actions.
     public static final StringFlag TELEPORT_ON_ENTRY = register(FlagCategory.ENTRY, new StringFlag("teleport-on-entry"));
@@ -153,8 +225,7 @@ public final class Flags {
     public static final BooleanFlag DISABLE_COLLISION = register(FlagCategory.PLAYER, new BooleanFlag("disable-collision"));
     public static final StateFlag CHAMBERED_ENDERPEARL = register(FlagCategory.MOVEMENT, new StateFlag("chambered-enderpearl", true));
 
-    private Flags() {
-    }
+    private Flags() {}
 
     /**
      * Register a custom flag under the given menu category.
@@ -164,30 +235,34 @@ public final class Flags {
      */
     public static synchronized <F extends Flag<?>> F register(final FlagCategory category, final F flag) {
         final String key = flag.getName().toLowerCase(Locale.ROOT);
-        if (REGISTRY.containsKey(key)) {
+        if (BY_NAME.containsKey(key)) {
             throw new IllegalStateException("A flag named '" + flag.getName() + "' is already registered");
         }
         flag.setCategory(category);
-        flag.setIndex(REGISTRY.size());
-        REGISTRY.put(key, flag);
+        flag.setIndex(ordered.size());
+        BY_NAME.put(key, flag);
+
+        final List<Flag<?>> updated = new ArrayList<>(ordered);
+        updated.add(flag);
+        ordered = List.copyOf(updated);
         return flag;
     }
 
     /**
      * How many flags are registered — the upper bound on {@link Flag#getIndex()}, for sizing bitsets.
      */
-    public static synchronized int count() {
-        return REGISTRY.size();
+    public static int count() {
+        return ordered.size();
     }
 
-    public static synchronized @Nullable Flag<?> get(final String name) {
-        return REGISTRY.get(name.toLowerCase(Locale.ROOT));
+    public static @Nullable Flag<?> get(final String name) {
+        return BY_NAME.get(name.toLowerCase(Locale.ROOT));
     }
 
     /**
-     * Snapshot of every registered flag, in registration order.
+     * Every registered flag, in registration order. Immutable and shared, do not copy it defensively.
      */
-    public static synchronized List<Flag<?>> all() {
-        return List.copyOf(REGISTRY.values());
+    public static List<Flag<?>> all() {
+        return ordered;
     }
 }

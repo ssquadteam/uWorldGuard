@@ -1,6 +1,7 @@
 package com.tricrotism.uworldguard;
 
 import com.tricrotism.uworldguard.commands.RegionCommands;
+import com.tricrotism.uworldguard.config.ConfigUpdater;
 import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.config.Settings;
 import com.tricrotism.uworldguard.gui.ChatInputListener;
@@ -13,15 +14,13 @@ import com.tricrotism.uworldguard.region.RegionContainerImpl;
 import com.tricrotism.uworldguard.region.RegionQuery;
 import com.tricrotism.uworldguard.selection.SelectionService;
 import com.tricrotism.uworldguard.selection.WandSelectionProvider;
-import com.tricrotism.uworldguard.service.ChamberedPearlTracker;
-import com.tricrotism.uworldguard.service.ChunkUnloadService;
-import com.tricrotism.uworldguard.service.CollisionService;
-import com.tricrotism.uworldguard.service.PlayerTickService;
+import com.tricrotism.uworldguard.service.*;
 import com.tricrotism.uworldguard.storage.RegionStore;
 import com.tricrotism.uworldguard.storage.SqlRegionStore;
 import com.tricrotism.uworldguard.storage.YamlRegionStore;
 import com.tricrotism.uworldguard.text.ChatTags;
 import com.tricrotism.uworldguard.text.MessageService;
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bstats.bukkit.Metrics;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -29,6 +28,8 @@ import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 import xyz.xenondevs.invui.InvUI;
 
+import java.io.File;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
@@ -39,11 +40,16 @@ public final class UWorldGuard extends JavaPlugin {
     private @Nullable Settings settings;
     private @Nullable MovementListener movement;
     private @Nullable CollisionService collision;
+    private @Nullable WorldEditFlagGuard worldEditGuard;
+    private @Nullable RegionStore store;
+    private @Nullable Metrics metrics;
+    private @Nullable ScheduledTask autoSaveTask;
 
     /**
-     * Re-reads {@code config.yml} and applies everything that can change at runtime. Movement mode is
-     * included, so switching EVENT/TASK or retuning the poll no longer needs a restart; storage
-     * backend and the selection wand are still bound at enable.
+     * Re-reads {@code config.yml} and applies everything that can change at runtime. Movement mode
+     * and the autosave cadence are included, so switching EVENT/TASK, retuning the poll, or changing
+     * {@code auto-save-minutes} no longer needs a restart; storage backend and the selection wand are
+     * still bound at enable.
      */
     public void reloadSettings() {
         reloadConfig();
@@ -56,22 +62,51 @@ public final class UWorldGuard extends JavaPlugin {
         if (listener != null && current != null) {
             listener.applySettings(current);
         }
+        if (current != null) {
+            scheduleAutoSave(current);
+        }
+    }
+
+    /**
+     * (Re)starts the autosave at the configured cadence, cancelling any task already running. Reading
+     * the period once at enable and dropping the handle meant a reload could neither retune it nor
+     * start one that had been configured off at boot.
+     */
+    private void scheduleAutoSave(final Settings settings) {
+        final ScheduledTask running = this.autoSaveTask;
+        if (running != null) {
+            running.cancel();
+            this.autoSaveTask = null;
+        }
+        final RegionContainerImpl regionContainer = this.container;
+        final long period = settings.autoSaveMinutes();
+        if (period <= 0L || regionContainer == null) {
+            return;
+        }
+        this.autoSaveTask = getServer().getAsyncScheduler().runAtFixedRate(this,
+            _ -> regionContainer.saveAll(), period, period, TimeUnit.MINUTES);
     }
 
     @Override
     public void onEnable() {
         InvUI.getInstance().setPlugin(this);
         saveDefaultConfig();
+        final List<String> addedSettings =
+            ConfigUpdater.merge(this, new File(getDataFolder(), "config.yml"), "config.yml");
+        if (!addedSettings.isEmpty()) {
+            reloadConfig();
+            getLogger().info("config.yml gained " + addedSettings.size()
+                + " new setting(s) from this version: " + String.join(", ", addedSettings));
+        }
         final Settings settings = new Settings();
         settings.load(getConfig());
         this.settings = settings;
         EventGate.load(getConfig());
 
-        if (GSitIntegration.isPresent(getServer())) {
-            GSitIntegration.registerFlags();
-        }
+        GSitIntegration.registerFlags();
 
         final RegionStore store = createStore(settings);
+        this.store = store;
 
         final RegionContainerImpl regionContainer = new RegionContainerImpl(this, store);
         regionContainer.loadAll();
@@ -96,20 +131,25 @@ public final class UWorldGuard extends JavaPlugin {
         getServer().getPluginManager().registerEvents(movement, this);
         getServer().getPluginManager().registerEvents(new NaturalListener(query), this);
         getServer().getPluginManager().registerEvents(new CropTrampleListener(query), this);
-        getServer().getPluginManager().registerEvents(new EntityListener(query), this);
+        getServer().getPluginManager().registerEvents(new EntityListener(regionContainer, query), this);
         getServer().getPluginManager().registerEvents(new PlayerStateListener(query, messages), this);
-        getServer().getPluginManager().registerEvents(new ItemUseListener(query, messages), this);
+        getServer().getPluginManager().registerEvents(new ItemUseListener(regionContainer, query, messages), this);
         getServer().getPluginManager().registerEvents(new EndCrystalListener(query, messages), this);
         getServer().getPluginManager().registerEvents(new WorkbenchListener(query, messages), this);
-        getServer().getPluginManager().registerEvents(new DeathListener(query), this);
+        getServer().getPluginManager().registerEvents(new DeathListener(query, messages), this);
         getServer().getPluginManager().registerEvents(new TravelListener(query), this);
         getServer().getPluginManager().registerEvents(new PearlListener(pearls), this);
         getServer().getPluginManager().registerEvents(new ChatInputListener(this, chatInput), this);
-        getServer().getPluginManager().registerEvents(new WorldListener(regionContainer), this);
+        final ChunkUnloadService chunkUnload = new ChunkUnloadService(this, regionContainer);
+        final WandSelectionProvider wand = selection.wandListener();
+        getServer().getPluginManager().registerEvents(
+            new WorldListener(regionContainer, chunkUnload, wand), this);
         getServer().getPluginManager().registerEvents(new ChatListener(chatTags), this);
         getServer().getPluginManager().registerEvents(new CommandListener(query, messages), this);
         getServer().getPluginManager().registerEvents(new PistonListener(query), this);
-        final WandSelectionProvider wand = selection.wandListener();
+        getServer().getPluginManager().registerEvents(new VehicleListener(query, messages), this);
+        getServer().getPluginManager().registerEvents(new InteractionListener(query, messages), this);
+        getServer().getPluginManager().registerEvents(new MachineListener(regionContainer, query, messages), this);
         if (wand != null) {
             getServer().getPluginManager().registerEvents(wand, this);
         }
@@ -119,23 +159,25 @@ public final class UWorldGuard extends JavaPlugin {
 
         movement.start();
         new PlayerTickService(this, regionContainer, query).start();
-        new ChunkUnloadService(this, regionContainer).start();
+        chunkUnload.start();
 
         if (getServer().getPluginManager().getPlugin("WorldEdit") != null) {
-            new WorldEditFlagGuard(query, regionContainer).register();
+            final WorldEditFlagGuard guard = new WorldEditFlagGuard(query, regionContainer);
+            guard.register();
+            this.worldEditGuard = guard;
         }
         if (GSitIntegration.isPresent(getServer())) {
             new GSitIntegration(query).register(this);
         }
 
-        if (settings.autoSaveMinutes() > 0) {
-            final long period = settings.autoSaveMinutes();
-            getServer().getAsyncScheduler().runAtFixedRate(this,
-                task -> regionContainer.saveAll(), period, period, TimeUnit.MINUTES);
+        scheduleAutoSave(settings);
+
+        if (settings.updateCheck() && !settings.updateUrl().isBlank()) {
+            new UpdateChecker(this, settings.updateUrl()).start();
         }
 
         // bStats | https://bstats.org/plugin/bukkit/uWorldGuard/32190
-        new Metrics(this, 32190);
+        this.metrics = new Metrics(this, 32190);
     }
 
     private RegionStore createStore(final Settings settings) {
@@ -150,17 +192,39 @@ public final class UWorldGuard extends JavaPlugin {
         return new YamlRegionStore(getDataFolder());
     }
 
+    /**
+     * Releases in dependency order: stop the things that read regions, then the ones that hold state
+     * outside this plugin, then write the regions out.
+     */
     @Override
     public void onDisable() {
         UWorldGuardApi.bind(null);
+        final ScheduledTask autoSave = this.autoSaveTask;
+        if (autoSave != null) {
+            autoSave.cancel();
+            this.autoSaveTask = null;
+        }
         if (movement != null) {
             movement.stop();
+            movement.shutdown();
+        }
+        if (worldEditGuard != null) {
+            worldEditGuard.unregister();
+            worldEditGuard = null;
         }
         if (collision != null) {
             collision.shutdown();
         }
+        if (metrics != null) {
+            metrics.shutdown();
+            metrics = null;
+        }
         if (container != null) {
             container.saveAllBlocking();
+        }
+        if (store != null) {
+            store.close();
+            store = null;
         }
     }
 }

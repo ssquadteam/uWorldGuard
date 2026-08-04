@@ -10,10 +10,14 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Whether a player's region protections are currently bypassed.
  *
- * <p>Holding {@code uworldguard.bypass} is what grants the ability; {@code /uwg bypass} lets a holder
- * switch it off for themselves so they can check a region behaves the way an ordinary player
- * experiences it, without an operator having to strip and re-grant the node. Staff who never touch
- * the command are unaffected.
+ * <p>Bypassing takes <em>both</em> halves: holding {@code uworldguard.bypass} grants the ability, and
+ * {@code /uwg bypass} arms it. Holding the node alone does nothing. That way a protection plugin never
+ * quietly stops protecting against whoever happens to hold the node — you are an ordinary player until
+ * you say otherwise, and the state is visible because you had to ask for it.
+ *
+ * <p>Armed state is deliberately not persisted: {@link #clear} drops it on quit, so a session always
+ * begins with protection applying. Losing the node while armed also takes effect immediately, since
+ * the permission is re-checked on every call rather than captured at toggle time.
  *
  * <p>Static like {@link EventGate}, and for the same reason: it is consulted from three dozen places
  * across every listener, and threading a service through each of their constructors to carry one
@@ -26,17 +30,18 @@ public final class Bypass {
     public static final String NODE = "uworldguard.bypass";
 
     /**
-     * Holders who have switched their own bypass off. Absence means "on", so the default is unchanged.
+     * Holders who have armed their bypass. Absence means "off", so the default is that protection
+     * applies to everyone.
      */
-    private static final Set<UUID> suspended = ConcurrentHashMap.newKeySet();
+    private static final Set<UUID> armed = ConcurrentHashMap.newKeySet();
 
     private Bypass() {}
 
     /**
-     * Whether {@code player} currently bypasses region protection.
+     * Whether {@code player} currently bypasses region protection — armed <em>and</em> still permitted.
      */
     public static boolean has(final Player player) {
-        return player.hasPermission(NODE) && (suspended.isEmpty() || !suspended.contains(player.getUniqueId()));
+        return !armed.isEmpty() && armed.contains(player.getUniqueId()) && player.hasPermission(NODE);
     }
 
     /**
@@ -44,24 +49,18 @@ public final class Bypass {
      */
     public static boolean toggle(final Player player) {
         final UUID uuid = player.getUniqueId();
-        if (suspended.remove(uuid)) {
-            return true;
+        if (armed.remove(uuid)) {
+            return false;
         }
-        suspended.add(uuid);
-        return false;
+        armed.add(uuid);
+        return true;
     }
 
     /**
-     * Whether the player has switched their bypass off (only meaningful if they hold the node).
-     */
-    public static boolean suspended(final Player player) {
-        return suspended.contains(player.getUniqueId());
-    }
-
-    /**
-     * Drop a player's state on quit, so the set cannot grow without bound.
+     * Drop a player's state on quit, so bypass never survives a session and the set cannot grow
+     * without bound.
      */
     public static void clear(final UUID uuid) {
-        suspended.remove(uuid);
+        armed.remove(uuid);
     }
 }

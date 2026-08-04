@@ -37,8 +37,14 @@ public final class CollisionService {
 
     /**
      * Enable or disable collision for a player, scheduling the team change only on a state flip.
+     *
+     * <p>Called on every block crossing, so the case where nobody on the server is in a no-collision
+     * region exits before touching the set at all.
      */
     public void set(final Player player, final boolean collisionDisabled) {
+        if (!collisionDisabled && disabled.isEmpty()) {
+            return;
+        }
         final UUID uuid = player.getUniqueId();
         final String entry = player.getName();
         if (collisionDisabled) {
@@ -82,6 +88,12 @@ public final class CollisionService {
         disabled.clear();
     }
 
+    /**
+     * Resolves the team on first use, and empties whatever the last run left in it. The main
+     * scoreboard is persisted in {@code scoreboard.dat}, so a crash — or any stop that never reaches
+     * {@link #shutdown} — leaves that session's members in the team; without this drain they come back
+     * collision-free at boot and stay that way, since nothing here would ever ask to remove them.
+     */
     private @Nullable Team team() {
         Team resolved = team;
         if (resolved != null) {
@@ -95,6 +107,10 @@ public final class CollisionService {
         resolved = scoreboard.getTeam(TEAM_NAME);
         if (resolved == null) {
             resolved = scoreboard.registerNewTeam(TEAM_NAME);
+        } else {
+            for (final String entry : Set.copyOf(resolved.getEntries())) {
+                resolved.removeEntry(entry);
+            }
         }
         resolved.setOption(Team.Option.COLLISION_RULE, Team.OptionStatus.NEVER);
         team = resolved;

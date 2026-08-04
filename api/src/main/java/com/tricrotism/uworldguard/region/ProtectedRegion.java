@@ -35,8 +35,36 @@ public abstract class ProtectedRegion {
     private volatile int priority;
     private volatile @Nullable ProtectedRegion parent;
 
+    /**
+     * Longest id accepted by {@link #isValidId}. Long enough for any descriptive name, short enough
+     * that an id still reads as one in a chat line or on an item.
+     */
+    public static final int MAX_ID_LENGTH = 64;
+
     protected ProtectedRegion(final String id) {
         this.id = id;
+    }
+
+    /**
+     * Whether {@code id} is safe to name a region. Letters, digits, underscore and hyphen only.
+     *
+     * <p>The exclusions are not cosmetic. Region ids become keys in the stored YAML document, and
+     * Bukkit splits a configuration path on {@code .} — a region called {@code my.base} writes as a
+     * nested {@code my: base:} pair and reads back as a region named {@code my} with no geometry,
+     * which fails the whole world's load and disables saving for it. Whitespace and colons break the
+     * document in the same family of ways.
+     */
+    public static boolean isValidId(final String id) {
+        if (id.isEmpty() || id.length() > MAX_ID_LENGTH) {
+            return false;
+        }
+        for (int i = 0, n = id.length(); i < n; i++) {
+            final char c = id.charAt(i);
+            if (c != '_' && c != '-' && !Character.isLetterOrDigit(c)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public final String getId() {
@@ -77,19 +105,33 @@ public abstract class ProtectedRegion {
     }
 
     /**
+     * Serialises every parent check-and-assign. The walk and the assignment have to be one step:
+     * {@code setparent a b} and {@code setparent b a} on two region threads otherwise both finish
+     * their walks before either assigns, and the pair ends up pointing at each other. Every reader of
+     * the chain — {@link #isOwner}, {@link #isMember}, {@link #getFlag}, {@link #getFlagGroup} — is an
+     * unbounded loop, so the next flag query on either region never returns and the thread that made
+     * it is lost. A per-instance lock cannot see that interleave; parent edits are command-rate, so
+     * one monitor for all of them is the cheapest thing that can. Readers stay lock-free: the
+     * invariant protecting them is that no cycle ever becomes visible.
+     */
+    private static final Object PARENT_LOCK = new Object();
+
+    /**
      * Set the parent for flag inheritance.
      *
      * @throws IllegalArgumentException if it would create a circular relationship
      */
     public final void setParent(final @Nullable ProtectedRegion parent) {
-        if (parent != null) {
-            for (@Nullable ProtectedRegion p = parent; p != null; p = p.parent) {
-                if (p == this) {
-                    throw new IllegalArgumentException("Circular parent relationship");
+        synchronized (PARENT_LOCK) {
+            if (parent != null) {
+                for (@Nullable ProtectedRegion p = parent; p != null; p = p.parent) {
+                    if (p == this) {
+                        throw new IllegalArgumentException("Circular parent relationship");
+                    }
                 }
             }
+            this.parent = parent;
         }
-        this.parent = parent;
     }
 
     public final DefaultDomain getOwners() {

@@ -16,8 +16,9 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.jspecify.annotations.NullMarked;
 
 /**
- * Enforces the {@code crop-trample} flag — stepping on farmland reverts it to dirt and destroys
- * the crop on top. Players trample via a PHYSICAL interaction; mobs via {@link EntityInteractEvent}.
+ * Enforces {@code crop-trample} — stepping on farmland reverts it to dirt and destroys the crop on
+ * top — and {@code use-dripleaf}, which shares the same stepped-on events. Players trigger both via a
+ * PHYSICAL interaction; mobs via {@link EntityInteractEvent}.
  */
 @NullMarked
 public final class CropTrampleListener implements Listener {
@@ -38,10 +39,19 @@ public final class CropTrampleListener implements Listener {
             return;
         }
         final Block block = event.getClickedBlock();
-        if (block == null || block.getType() != Material.FARMLAND) {
+        if (block == null) {
             return;
         }
         final Player player = event.getPlayer();
+        if (block.getType() == Material.BIG_DRIPLEAF) {
+            if (!query.testState(block, Flags.USE_DRIPLEAF, player) && !Bypass.has(player)) {
+                event.setCancelled(true);
+            }
+            return;
+        }
+        if (block.getType() != Material.FARMLAND) {
+            return;
+        }
         if (!query.testState(block, Flags.CROP_TRAMPLE, player)) {
             if (Bypass.has(player)) {
                 return;

@@ -22,8 +22,18 @@ import java.util.*;
 @NullMarked
 public final class RegionSerializer {
 
+    /**
+     * Path separator for the region document. Bukkit's default is {@code .}, which it splits paths
+     * on — so a region id containing one would be written as a nested section and read back as a
+     * different, geometry-less region. Ids are validated on the way in, but the document is also
+     * hand-editable and takes imports from WorldGuard, so the format itself refuses to split: no
+     * character here can appear in a YAML key.
+     */
+    private static final char SEPARATOR = (char) 0;
+
     public String toYaml(final RegionManager manager) {
         final YamlConfiguration yaml = new YamlConfiguration();
+        yaml.options().pathSeparator(SEPARATOR);
         final ConfigurationSection root = yaml.createSection("regions");
         for (final ProtectedRegion region : manager.getRegions()) {
             writeRegion(root.createSection(region.getId()), region);
@@ -33,6 +43,7 @@ public final class RegionSerializer {
 
     public void fromYaml(final String text, final RegionManager manager) throws InvalidConfigurationException {
         final YamlConfiguration yaml = new YamlConfiguration();
+        yaml.options().pathSeparator(SEPARATOR);
         yaml.loadFromString(text);
         final ConfigurationSection root = yaml.getConfigurationSection("regions");
         if (root == null) {

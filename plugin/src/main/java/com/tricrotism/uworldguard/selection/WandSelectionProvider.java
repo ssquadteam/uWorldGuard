@@ -5,12 +5,14 @@ import com.tricrotism.uworldguard.util.BlockVector3;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
@@ -28,6 +30,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @NullMarked
 public final class WandSelectionProvider implements SelectionProvider, Listener {
 
+    private static final String NODE = "uworldguard.region.define";
+
     private final Material wand;
     private final Map<UUID, Location> first = new ConcurrentHashMap<>();
     private final Map<UUID, Location> second = new ConcurrentHashMap<>();
@@ -43,6 +47,9 @@ public final class WandSelectionProvider implements SelectionProvider, Listener 
             return;
         }
         final Player player = event.getPlayer();
+        if (!player.hasPermission(NODE)) {
+            return;
+        }
         if (event.getAction() == Action.LEFT_CLICK_BLOCK) {
             first.put(player.getUniqueId(), block.getLocation());
             send(player, "first", block);
@@ -52,6 +59,27 @@ public final class WandSelectionProvider implements SelectionProvider, Listener 
             send(player, "second", block);
             event.setCancelled(true);
         }
+    }
+
+    /**
+     * Drops a player's corners on quit. Both are {@link Location}s, which hold a strong reference to
+     * their {@link org.bukkit.World} — left behind they would grow by two entries per player who
+     * ever touched the wand, and keep an unloaded world reachable along with them.
+     */
+    @EventHandler
+    public void onQuit(final PlayerQuitEvent event) {
+        final UUID uuid = event.getPlayer().getUniqueId();
+        first.remove(uuid);
+        second.remove(uuid);
+    }
+
+    /**
+     * Drops every corner that points into {@code world}, so an unloaded world is not kept reachable by
+     * the selection of someone who is still online and never made another one.
+     */
+    public void forgetWorld(final World world) {
+        first.values().removeIf(location -> location.getWorld() == world);
+        second.values().removeIf(location -> location.getWorld() == world);
     }
 
     private void send(final Player player, final String which, final Block block) {

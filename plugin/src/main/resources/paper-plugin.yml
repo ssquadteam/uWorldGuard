@@ -6,6 +6,7 @@ main: com.tricrotism.uworldguard.UWorldGuard
 loader: com.tricrotism.uworldguard.UWorldGuardLoader
 api-version: '26.2'
 load: STARTUP
+folia-supported: true
 
 dependencies:
     server:
@@ -28,3 +29,52 @@ dependencies:
 
 authors: [ tricrotism ]
 website: https://tricrotism.com
+
+# Declared explicitly because an undeclared permission defaults to OP in Bukkit. That is fine for the
+# command nodes, but it silently handed every operator uworldguard.bypass — so a protection plugin
+# quietly stopped protecting against the very people testing it, with nothing on screen to say why.
+permissions:
+    uworldguard.bypass:
+        description: Allows ignoring region protection. Off by default, including for operators.
+            Holding this node alone does nothing — the holder must also run /uwg bypass to arm it,
+            and it turns itself off again when they log out.
+        default: false
+    uworldguard.notify:
+        description: Receive notify-enter / notify-leave announcements.
+        default: op
+    uworldguard.menu:
+        description: Open the region browser and per-region flag editor.
+        default: op
+    uworldguard.reload:
+        description: Reload messages and config.
+        default: op
+    uworldguard.settings:
+        description: Open the settings menu.
+        default: op
+    uworldguard.admin.migrate:
+        description: Import regions from an existing WorldGuard installation.
+        default: op
+    uworldguard.region.define:
+        description: Create regions.
+        default: op
+    uworldguard.region.remove:
+        description: Remove regions.
+        default: op
+    uworldguard.region.flag:
+        description: Set and clear region flags.
+        default: op
+    uworldguard.region.info:
+        description: View a region's details.
+        default: op
+    uworldguard.region.list:
+        description: List the regions in a world.
+        default: op
+    uworldguard.region.members:
+        description: Add and remove region owners and members.
+        default: op
+    uworldguard.region.priority:
+        description: Change a region's priority.
+        default: op
+    uworldguard.region.setparent:
+        description: Set and clear a region's parent.
+        default: op

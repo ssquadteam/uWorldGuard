@@ -59,3 +59,10 @@ movement:
 #                - PlayerInteractEvent
 #                - EntityDamageEvent
 #                - EntityDamageByEntityEvent
+
+# Startup version check. Nothing is printed when you are already on the latest release — a notice
+# only appears when there is actually something newer, so a clean startup stays clean. The request
+# runs off the main thread after the plugin has finished enabling, and a server with no outbound
+# network simply stays quiet rather than warning about it every restart.
+updates:
+    check: true

@@ -27,7 +27,7 @@ public final class StateFlag extends Flag<State> {
 
     @Override
     public @Nullable State parse(final String input) {
-        return switch (input.toLowerCase(Locale.ROOT)) {
+        return switch (input.trim().toLowerCase(Locale.ROOT)) {
             case "allow", "true", "yes" -> State.ALLOW;
             case "deny", "false", "no" -> State.DENY;
             default -> null;

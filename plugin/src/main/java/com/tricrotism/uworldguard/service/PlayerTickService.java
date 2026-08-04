@@ -4,6 +4,7 @@ import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.region.ApplicableRegionSet;
 import com.tricrotism.uworldguard.region.RegionContainerImpl;
 import com.tricrotism.uworldguard.region.RegionQuery;
+import org.bukkit.WeatherType;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.entity.Player;
@@ -12,6 +13,7 @@ import org.bukkit.potion.PotionEffect;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -34,6 +36,7 @@ public final class PlayerTickService {
     private final Plugin plugin;
     private final RegionContainerImpl container;
     private final RegionQuery query;
+    private long seconds;
 
     public PlayerTickService(final Plugin plugin, final RegionContainerImpl container, final RegionQuery query) {
         this.plugin = plugin;
@@ -44,24 +47,119 @@ public final class PlayerTickService {
     public void start() {
         plugin.getServer().getGlobalRegionScheduler().runAtFixedRate(plugin, task -> {
             if (!container.anyRegionUses(Flags.HEAL_AMOUNT)
+                && !container.anyRegionUses(Flags.FEED_AMOUNT)
+                && !container.anyRegionUses(Flags.TIME_LOCK)
+                && !container.anyRegionUses(Flags.WEATHER_LOCK)
                 && !container.anyRegionUses(Flags.GIVE_EFFECTS)
                 && !container.anyRegionUses(Flags.BLOCKED_EFFECTS)) {
                 return;
             }
+            final long tick = ++seconds;
             for (final Player player : plugin.getServer().getOnlinePlayers()) {
-                player.getScheduler().run(plugin, t -> apply(player), null);
+                player.getScheduler().run(plugin, t -> apply(player, tick), null);
             }
         }, 20L, 20L);
     }
 
-    private void apply(final Player player) {
+    private void apply(final Player player, final long tick) {
         final ApplicableRegionSet regions = query.getApplicableRegions(player);
-        if (regions.worldUses(Flags.HEAL_AMOUNT)) {
+        if (regions.worldUses(Flags.HEAL_AMOUNT) && due(tick, regions.queryValue(Flags.HEAL_DELAY))) {
             heal(player, regions);
+        }
+        if (regions.worldUses(Flags.FEED_AMOUNT) && due(tick, regions.queryValue(Flags.FEED_DELAY))) {
+            feed(player, regions);
+        }
+        if (regions.worldUses(Flags.TIME_LOCK) || regions.worldUses(Flags.WEATHER_LOCK)) {
+            lockSky(player, regions);
         }
         if (regions.worldUses(Flags.GIVE_EFFECTS) || regions.worldUses(Flags.BLOCKED_EFFECTS)) {
             effects(player, regions);
         }
+    }
+
+    /**
+     * Whether this second is one the flag should act on. The service ticks once a second, so a delay
+     * of {@code n} means acting every {@code n}th tick; unset or non-positive keeps the old
+     * every-second behaviour rather than silently pausing the effect.
+     */
+    private static boolean due(final long tick, final @Nullable Integer delay) {
+        return delay == null || delay <= 1 || tick % delay == 0L;
+    }
+
+    /**
+     * Applies time-lock / weather-lock client-side, so one player standing in an eternal-night arena
+     * does not change the sky for the whole server. Both reset the moment the flag stops applying,
+     * which is why the reset runs even when the value is absent.
+     */
+    private void lockSky(final Player player, final ApplicableRegionSet regions) {
+        final String time = regions.queryValue(Flags.TIME_LOCK);
+        if (time == null) {
+            player.resetPlayerTime();
+        } else {
+            final Long ticks = parseTime(time);
+            if (ticks != null) {
+                player.setPlayerTime(ticks, false);
+            }
+        }
+
+        final String weather = regions.queryValue(Flags.WEATHER_LOCK);
+        if (weather == null) {
+            player.resetPlayerWeather();
+            return;
+        }
+        final WeatherType type = switch (weather.trim().toLowerCase(Locale.ROOT)) {
+            case "clear", "sun", "sunny" -> WeatherType.CLEAR;
+            case "downfall", "rain", "storm", "thunder" -> WeatherType.DOWNFALL;
+            default -> null;
+        };
+        if (type != null) {
+            player.setPlayerWeather(type);
+        }
+    }
+
+    private static @Nullable Long parseTime(final String raw) {
+        return switch (raw.trim().toLowerCase(Locale.ROOT)) {
+            case "day" -> 1000L;
+            case "noon" -> 6000L;
+            case "sunset", "dusk" -> 12000L;
+            case "night" -> 13000L;
+            case "midnight" -> 18000L;
+            case "sunrise", "dawn" -> 23000L;
+            default -> {
+                try {
+                    yield Long.parseLong(raw.trim());
+                } catch (final NumberFormatException e) {
+                    yield null;
+                }
+            }
+        };
+    }
+
+    /**
+     * The feeding counterpart to {@link #heal}: same clamping, against the 0–20 food scale.
+     */
+    private void feed(final Player player, final ApplicableRegionSet regions) {
+        final Integer amount = regions.queryValue(Flags.FEED_AMOUNT);
+        if (amount == null || amount == 0) {
+            return;
+        }
+        final int min = Math.max(0, orDefault(regions.queryValue(Flags.MIN_FOOD), 0));
+        final int max = Math.min(20, orDefault(regions.queryValue(Flags.MAX_FOOD), 20));
+        final int food = player.getFoodLevel();
+        if (amount > 0 && food >= max) {
+            return;
+        }
+        if (amount < 0 && food <= min) {
+            return;
+        }
+        final int target = Math.clamp(food + amount, min, max);
+        if (target != food) {
+            player.setFoodLevel(target);
+        }
+    }
+
+    private static int orDefault(final @Nullable Integer value, final int fallback) {
+        return value != null ? value : fallback;
     }
 
     private void heal(final Player player, final ApplicableRegionSet regions) {

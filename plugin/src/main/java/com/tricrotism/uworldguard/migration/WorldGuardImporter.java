@@ -23,8 +23,9 @@ import java.util.regex.Pattern;
  * ({@code plugins/WorldGuard/worlds/<world>/regions.yml}) and imports them into a
  * {@link RegionManager}. WorldGuard's flag names are mirrored by {@link Flags}, so flags
  * round-trip by name; cuboid, poly2d and global regions are supported (cylinder/sphere are
- * uWorldGuard-only and never appear in WorldGuard data). Per-flag region groups
- * ({@code <flag>-group}) and legacy name-based domain entries are not migrated.
+ * uWorldGuard-only and never appear in WorldGuard data). Legacy name-based domain entries are not
+ * migrated. Flags WorldGuard spells differently go through {@link #FLAG_ALIASES}, legacy colour codes
+ * become MiniMessage, and WorldGuard's nested location blocks become uWorldGuard's location strings.
  *
  * <p>Pure parsing + in-memory population — no Bukkit world access — so it is safe to run on
  * the async scheduler. The caller decides persistence (mark dirty, save on cycle).
@@ -40,7 +41,10 @@ public final class WorldGuardImporter {
     private static final Map<String, String> FLAG_ALIASES = Map.of(
         "block-trampling", "crop-trample",
         "wind-charge-burst", "wind-charge",
-        "frosted-ice-form", "frostwalker"
+        "frosted-ice-form", "frostwalker",
+        "min-heal", "heal-min-health",
+        "max-heal", "heal-max-health",
+        "spawn", "respawn-location"
     );
 
     /**
@@ -133,7 +137,7 @@ public final class WorldGuardImporter {
             region.setPriority(sec.getInt("priority", 0));
             readDomain(sec.getConfigurationSection("owners"), region.getOwners(), id, "owner", warnings);
             readDomain(sec.getConfigurationSection("members"), region.getMembers(), id, "member", warnings);
-            readFlags(sec.getConfigurationSection("flags"), region, unmapped, groupQualifiers, warnings);
+            readFlags(sec.getConfigurationSection("flags"), region, worldName, unmapped, groupQualifiers, warnings);
             manager.addRegion(region);
             imported++;
 
@@ -241,8 +245,13 @@ public final class WorldGuardImporter {
                     + "' is not a valid UUID — not added");
             }
         }
-        for (final String group : sec.getStringList("groups")) {
+        final List<String> groups = sec.getStringList("groups");
+        for (final String group : groups) {
             domain.addGroup(group);
+        }
+        if (!groups.isEmpty()) {
+            warnings.add("region '" + id + "': " + role + " group(s) " + String.join(", ", groups)
+                + " were imported but group trust is not enforced, add those players by name");
         }
         // Pre-UUID WorldGuard installs stored bare player names here. There is nothing to resolve
         // them against offline, so they are dropped — but silently dropping a region's owners is
@@ -260,7 +269,7 @@ public final class WorldGuardImporter {
      * the caller can tell the admin exactly what did not come over.
      */
     private static void readFlags(
-        final @Nullable ConfigurationSection sec, final ProtectedRegion region,
+        final @Nullable ConfigurationSection sec, final ProtectedRegion region, final String worldName,
         final Map<String, Integer> unmapped, final int[] groupQualifiers, final List<String> warnings
     ) {
         if (sec == null) {
@@ -284,7 +293,7 @@ public final class WorldGuardImporter {
                 unmapped.merge(key, 1, Integer::sum);
                 continue;
             }
-            applyFlag(region, flag, sec.get(key), warnings);
+            applyFlag(region, flag, sec.get(key), worldName, warnings);
         }
     }
 
@@ -302,18 +311,18 @@ public final class WorldGuardImporter {
 
     private static <T> void applyFlag(
         final ProtectedRegion region, final Flag<T> flag, final @Nullable Object stored,
-        final List<String> warnings
+        final String worldName, final List<String> warnings
     ) {
         if (stored == null) {
             return;
         }
-        final T value = flag.unmarshal(convertLegacyColours(stored));
+        final T value = flag.unmarshal(convertLegacyColours(convertLocation(stored, worldName)));
         // The flag name matched, so this is a value uWorldGuard's type could not read — a material
         // that no longer exists, a number where a state belongs. Worth naming individually: the
         // region keeps every other flag, so the admin only has to fix this one.
         if (value == null) {
             warnings.add("region '" + region.getId() + "': flag '" + flag.getName() + "' value '"
-                + stored + "' could not be read — flag not set");
+                + stored + "' could not be read, flag not set");
             return;
         }
         region.setFlag(flag, value);
@@ -331,6 +340,41 @@ public final class WorldGuardImporter {
         }
         return MiniMessage.miniMessage().serialize(
             LegacyComponentSerializer.legacyAmpersand().deserialize(text.replace('§', '&')));
+    }
+
+    /**
+     * WorldGuard writes location flags as a nested {@code {world, x, y, z, yaw, pitch}} block, while
+     * uWorldGuard's location flags are the string {@code world,x,y,z,yaw,pitch}. Without this the whole
+     * map stringifies into nonsense and the flag is dropped.
+     *
+     * <p>The world is taken from the stored value only when it is a plain name; WorldGuard also writes
+     * it as a world UUID, which cannot be resolved without touching Bukkit — and this class is
+     * deliberately Bukkit-free so it can run off the main thread. The region's own world is the right
+     * answer in every case but a cross-world teleport, which the admin can fix by hand.
+     */
+    private static Object convertLocation(final Object stored, final String worldName) {
+        final Map<?, ?> map = stored instanceof ConfigurationSection section
+            ? section.getValues(false)
+            : stored instanceof Map<?, ?> m ? m : null;
+        if (map == null || !(map.get("x") instanceof Number x)
+            || !(map.get("y") instanceof Number y) || !(map.get("z") instanceof Number z)) {
+            return stored;
+        }
+        final String world = map.get("world") instanceof String name && !name.isBlank() && !isUuid(name)
+            ? name : worldName;
+        final double yaw = map.get("yaw") instanceof Number n ? n.doubleValue() : 0.0;
+        final double pitch = map.get("pitch") instanceof Number n ? n.doubleValue() : 0.0;
+        return world + "," + x.doubleValue() + "," + y.doubleValue() + "," + z.doubleValue()
+            + "," + yaw + "," + pitch;
+    }
+
+    private static boolean isUuid(final String value) {
+        try {
+            UUID.fromString(value);
+            return true;
+        } catch (final IllegalArgumentException _) {
+            return false;
+        }
     }
 
     private static int floor(final double value) {

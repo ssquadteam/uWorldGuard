@@ -5,7 +5,7 @@ import com.tricrotism.uworldguard.region.ProtectedRegion;
 import com.tricrotism.uworldguard.region.RegionManager;
 import com.tricrotism.uworldguard.text.Messages;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.ClickType;
@@ -33,8 +33,6 @@ import java.util.function.Predicate;
  */
 @NullMarked
 public final class FlagMenu {
-
-    private static final MiniMessage MM = MiniMessage.miniMessage();
 
     private final RegionManager manager;
     private final ProtectedRegion region;
@@ -67,24 +65,67 @@ public final class FlagMenu {
             .addIngredient('C', MenuItems.close())
             .setContent(categoryButtons())
             .build();
-        window(player, "<dark_gray>Flags: <aqua>" + region.getId(), gui);
+        window(player, Messages.format("<dark_gray>Flags: <aqua><id>",
+            Placeholder.unparsed("id", region.getId())), gui);
     }
 
     private List<Item> categoryButtons() {
         final FlagCategory[] categories = FlagCategory.values();
+        final CategoryCards cards = cards();
         final List<Item> items = new ArrayList<>(categories.length);
         for (final FlagCategory category : categories) {
+            final int index = category.ordinal();
             items.add(Item.builder()
-                .setItemProvider(_ -> new ItemBuilder(iconFor(category))
-                    .setName(MM.deserialize("<!i><yellow>" + category.getDisplayName()))
+                .setItemProvider(new ItemBuilder(iconFor(category))
+                    .setName(cards.names()[index])
                     .addLoreLines(
-                        MM.deserialize("<!i><gray><white>" + countIn(category) + "</white> flags"),
+                        cards.counts()[index],
                         Messages.format("<!i><dark_gray>Click to view")))
                 .addClickHandler((item, click) -> openList(click.player(),
-                    "<dark_gray>" + category.getDisplayName(), flag -> flag.getCategory() == category))
+                    Messages.format("<dark_gray><name>",
+                        Placeholder.unparsed("name", category.getDisplayName())),
+                    flag -> flag.getCategory() == category))
                 .build());
         }
         return items;
+    }
+
+    /**
+     * The landing page's per-category name and flag count, both fixed for the life of the server:
+     * flags only register during enable. Rendered on demand, the eight tiles cost a walk of every
+     * registered flag per tile plus sixteen uncached MiniMessage parses — on every open and every
+     * press of Back, for an answer that cannot change.
+     */
+    private record CategoryCards(Component[] names, Component[] counts) {}
+
+    private static volatile @Nullable CategoryCards cards;
+
+    /**
+     * Built on first use rather than in a static initialiser, which would run before the integrations
+     * have registered their flags. Two menus opening at once simply build identical tables.
+     */
+    private static CategoryCards cards() {
+        CategoryCards cached = cards;
+        if (cached != null) {
+            return cached;
+        }
+        final FlagCategory[] categories = FlagCategory.values();
+        final int[] tally = new int[categories.length];
+        for (final Flag<?> flag : Flags.all()) {
+            tally[flag.getCategory().ordinal()]++;
+        }
+        final Component[] names = new Component[categories.length];
+        final Component[] counts = new Component[categories.length];
+        for (final FlagCategory category : categories) {
+            final int index = category.ordinal();
+            names[index] = Messages.format("<!i><yellow><name>",
+                Placeholder.unparsed("name", category.getDisplayName()));
+            counts[index] = Messages.format("<!i><gray><white><count></white> flags",
+                Placeholder.unparsed("count", Integer.toString(tally[index])));
+        }
+        cached = new CategoryCards(names, counts);
+        cards = cached;
+        return cached;
     }
 
     private Item activeButton() {
@@ -92,9 +133,11 @@ public final class FlagMenu {
             .setItemProvider(_ -> new ItemBuilder(Material.NETHER_STAR)
                 .setName(Messages.format("<!i><yellow>Active flags"))
                 .addLoreLines(
-                    MM.deserialize("<!i><gray><white>" + region.getFlags().size() + "</white> set on this region"),
+                    Messages.format("<!i><gray><white><count></white> set on this region",
+                        Placeholder.unparsed("count", Integer.toString(region.getFlags().size()))),
                     Messages.format("<!i><dark_gray>Click to view only the flags you've set")))
-            .addClickHandler((item, click) -> openList(click.player(), "<dark_gray>Active flags",
+            .addClickHandler((item, click) -> openList(click.player(),
+                Messages.format("<dark_gray>Active flags"),
                 flag -> region.getFlags().get(flag) != null))
             .build();
     }
@@ -106,7 +149,7 @@ public final class FlagMenu {
                 .addLoreLines(
                     Messages.format("<!i><gray>Find a flag by name across all categories"),
                     Messages.format("<!i><dark_gray>Click, then type a query")))
-            .addClickHandler((item, click) -> promptSearch(click.player()))
+            .addClickHandler((_, click) -> promptSearch(click.player()))
             .build();
     }
 
@@ -117,13 +160,14 @@ public final class FlagMenu {
             final String query = raw.trim().toLowerCase(Locale.ROOT);
             if (query.isEmpty()) {
                 openLanding(player);
-            } else {
-                openList(player, "<dark_gray>Search: <aqua>" + query, flag -> flag.getName().contains(query));
+                return;
             }
+            openList(player, Messages.format("<dark_gray>Search: <aqua><query>",
+                Placeholder.unparsed("query", query)), flag -> flag.getName().contains(query));
         });
     }
 
-    private void openList(final Player player, final String title, final Predicate<Flag<?>> filter) {
+    private void openList(final Player player, final Component title, final Predicate<Flag<?>> filter) {
         final PagedGui<Item> gui = PagedGui.itemsBuilder()
             .setStructure(
                 "x x x x x x x x x",
@@ -149,40 +193,49 @@ public final class FlagMenu {
             .build();
     }
 
+    /**
+     * The name and the "Accepts:" hint depend only on the flag, so they are parsed once here rather
+     * than inside the provider, which re-runs every time the item repaints itself after a click.
+     */
     private List<Item> flagItems(final Predicate<Flag<?>> filter) {
         final List<Item> items = new ArrayList<>();
         for (final Flag<?> flag : Flags.all()) {
             if (!filter.test(flag)) {
                 continue;
             }
+            final Component name = Messages.format("<!i><yellow><flag>",
+                Placeholder.unparsed("flag", flag.getName()));
+            final Component accepts = Messages.format("<!i><gray>Accepts: <white><hint>",
+                Placeholder.unparsed("hint", typeHint(flag)));
             items.add(Item.builder()
-                .setItemProvider(_ -> provider(flag))
+                .setItemProvider(_ -> provider(flag, name, accepts))
                 .addClickHandler((item, click) -> onClick(flag, click.player(), click.clickType(), item))
                 .build());
         }
         return items;
     }
 
-    private void window(final Player player, final String title, final PagedGui<Item> gui) {
+    private void window(final Player player, final Component title, final PagedGui<Item> gui) {
         Window.builder()
             .setViewer(player)
-            .setTitle(MM.deserialize(title))
+            .setTitle(title)
             .setUpperGui(gui)
             .build()
             .open();
     }
 
-    private ItemProvider provider(final Flag<?> flag) {
+    private ItemProvider provider(final Flag<?> flag, final Component name, final Component accepts) {
         final Object value = region.getFlags().get(flag);
         final boolean toggle = flag instanceof StateFlag || flag instanceof BooleanFlag;
         final RegionGroup group = region.getFlagGroup(flag);
         return new ItemBuilder(materialFor(value))
-            .setName(MM.deserialize("<!i><yellow>" + flag.getName()))
+            .setName(name)
             .addLoreLines(
-                MM.deserialize("<!i><gray>Now: " + valueText(value)),
+                valueLine(value),
                 group == RegionGroup.ALL
-                    ? MM.deserialize("<!i><gray>Accepts: <white>" + typeHint(flag))
-                    : MM.deserialize("<!i><gray>Applies to: <gold>" + group.serialized()),
+                    ? accepts
+                    : Messages.format("<!i><gray>Applies to: <gold><group>",
+                    Placeholder.unparsed("group", group.serialized())),
                 Component.empty(),
                 Messages.format(toggle
                     ? "<!i><dark_gray>Left-click <gray>cycle allow / deny / unset"
@@ -193,18 +246,20 @@ public final class FlagMenu {
     /**
      * The current value, coloured by meaning so a wall of flags reads at a glance: green permits,
      * red denies, grey is untouched and follows the server default.
+     *
+     * <p>The colour is the template's; the value itself is a placeholder. String-typed flags hold
+     * whatever an operator typed into chat — greeting text, deny messages — and concatenating that
+     * into the template would parse it as markup, which for a malformed tag throws while the item is
+     * being built.
      */
-    private static String valueText(final @Nullable Object value) {
+    private static Component valueLine(final @Nullable Object value) {
         if (value == null) {
-            return "<dark_gray><i>not set (uses default)</i>";
+            return Messages.format("<!i><gray>Now: <dark_gray><i>not set (uses default)</i>");
         }
-        if (value == State.ALLOW || Boolean.TRUE.equals(value)) {
-            return "<green>" + value;
-        }
-        if (value == State.DENY || Boolean.FALSE.equals(value)) {
-            return "<red>" + value;
-        }
-        return "<white>" + value;
+        final String colour = value == State.ALLOW || Boolean.TRUE.equals(value) ? "<green>"
+            : value == State.DENY || Boolean.FALSE.equals(value) ? "<red>" : "<white>";
+        return Messages.format("<!i><gray>Now: " + colour + "<value>",
+            Placeholder.unparsed("value", String.valueOf(value)));
     }
 
     private static String typeHint(final Flag<?> flag) {
@@ -222,6 +277,9 @@ public final class FlagMenu {
         }
         if (flag instanceof PotionEffectSetFlag) {
             return "effects, e.g. SPEED:1, JUMP";
+        }
+        if (flag instanceof EntityTypeSetFlag) {
+            return "entity list, e.g. CREEPER, minecraft:zombie";
         }
         if (flag instanceof StringSetFlag) {
             return "commands, e.g. home, tp";
@@ -259,6 +317,12 @@ public final class FlagMenu {
         }
     }
 
+    /**
+     * Read-then-write, so two operators cycling the same flag from their own menus at the same moment
+     * can lose one click; the loser sees the result on their next repaint and clicks again. Left as
+     * is: an atomic compute on the region would have to exist on the API for one GUI's benefit, and
+     * the last write is a valid outcome of two simultaneous clicks either way.
+     */
     private void cycleState(final StateFlag flag) {
         final Object current = region.getFlags().get(flag);
         final State next = current == null ? State.ALLOW : current == State.ALLOW ? State.DENY : null;
@@ -292,16 +356,6 @@ public final class FlagMenu {
         }
         region.setFlag(flag, parsed);
         return true;
-    }
-
-    private static int countIn(final FlagCategory category) {
-        int count = 0;
-        for (final Flag<?> flag : Flags.all()) {
-            if (flag.getCategory() == category) {
-                count++;
-            }
-        }
-        return count;
     }
 
     private static Material iconFor(final FlagCategory category) {

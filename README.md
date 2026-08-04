@@ -3,8 +3,10 @@
 World Guard... but out of this world.
 
 Region protection for Paper and Folia. Claim an area, decide what's allowed inside it, and the
-plugin enforces it. Nearly 100 flags, a GUI for people who don't like commands, and an API for
+plugin enforces it. Over 165 flags, a GUI for people who don't like commands, and an API for
 people who do.
+
+> **Need help?** Join our support Discord: https://tricrotism.com/support
 
 |               |                          |
 |---------------|--------------------------|
@@ -80,11 +82,21 @@ A `pvp deny` shop inside a `pvp allow` arena works — give the shop a higher pr
 
 ### Bypassing your own rules
 
-Give yourself `uworldguard.bypass` and toggle it while you build:
+Bypassing takes **both** halves — the node *and* the command:
+
+1. Hold `uworldguard.bypass`. It is **off by default, including for operators**.
+2. Run `/wg bypass` to arm it.
+
+Holding the node on its own does nothing. A protection plugin that silently stops protecting against
+whoever happens to hold a node is worse than one that makes you ask, so you stay an ordinary player
+until you say otherwise.
 
 ```
 /wg bypass
 ```
+
+Bypass never survives a session — it turns itself off when you log out, and revoking the node takes
+effect immediately even if the player is already armed.
 
 ### Commands
 
@@ -114,22 +126,24 @@ Every command works as `/uworldguard`, `/uwg`, `/worldguard`, or `/wg`. Use whic
 
 ### Permissions
 
-| Node                           | Grants                       |
-|--------------------------------|------------------------------|
-| `uworldguard.region.define`    | All four `define-*` commands |
-| `uworldguard.region.remove`    | `remove`                     |
-| `uworldguard.region.list`      | `list`                       |
-| `uworldguard.region.info`      | `info`, `here`               |
-| `uworldguard.region.flag`      | `flag`                       |
-| `uworldguard.region.priority`  | `priority`                   |
-| `uworldguard.region.setparent` | `setparent`, `removeparent`  |
-| `uworldguard.region.members`   | Owner and member commands    |
-| `uworldguard.menu`             | `menu`                       |
-| `uworldguard.settings`         | `settings`                   |
-| `uworldguard.reload`           | `reload`                     |
-| `uworldguard.bypass`           | Ignore region protection     |
+| Node                           | Grants                                            |
+|--------------------------------|---------------------------------------------------|
+| `uworldguard.region.define`    | All four `define-*` commands                      |
+| `uworldguard.region.remove`    | `remove`                                          |
+| `uworldguard.region.list`      | `list`                                            |
+| `uworldguard.region.info`      | `info`, `here`                                    |
+| `uworldguard.region.flag`      | `flag`                                            |
+| `uworldguard.region.priority`  | `priority`                                        |
+| `uworldguard.region.setparent` | `setparent`, `removeparent`                       |
+| `uworldguard.region.members`   | Owner and member commands                         |
+| `uworldguard.menu`             | `menu`                                            |
+| `uworldguard.settings`         | `settings`                                        |
+| `uworldguard.reload`           | `reload`                                          |
+| `uworldguard.notify`           | See `notify-enter` / `notify-leave` announcements |
+| `uworldguard.bypass`           | Ignore region protection — **default: off**       |
 
-Commands you lack permission for don't appear in tab-completion.
+Every node except `uworldguard.bypass` defaults to operators. Commands you lack permission for
+don't appear in tab-completion.
 
 ### Flags
 
@@ -156,23 +170,39 @@ Groups: `all` · `members` · `owners` · `nonmembers` · `nonowners` · `none`.
 WorldGuard's spellings work too, so `non-members` and `non_members` are both accepted.
 
 <details>
-<summary><b>Protection</b> — who can touch what (20 flags)</summary>
+<summary><b>Protection</b> — who can touch what (38 flags)</summary>
 
 `build` · `block-break` · `block-place` · `interact` · `use` · `chest-access` · `pvp` ·
 `damage-animals` · `fall-damage` · `ride` · `sleep` · `tnt` · `lighter` · `end-crystal-place` ·
 `end-crystal-interact` · `worldedit` · `pistons` · `passthrough` · `entity-item-frame-destroy` ·
-`entity-painting-destroy`
+`entity-painting-destroy` · `vehicle-place` · `vehicle-destroy` · `potion-splash` ·
+`firework-damage` · `use-anvil` · `respawn-anchors` · `use-dripleaf` · `sign-edit` · `tnt-prime` ·
+`armor-stand-manipulate` · `mannequin-manipulate` · `vault-use` · `bucket-entity` · `shear` ·
+`leash` · `name-entity` · `flower-pot` · `lectern`
+
+`sign-edit` matters because signs are editable after placement since 1.20. `vault-use` and
+`mannequin-manipulate` cover the trial-chamber vault (1.21) and the mannequin (26.x).
 
 `passthrough` is the odd one: it makes a region *not* apply protection, letting lower-priority
 regions decide instead.
 </details>
 
 <details>
-<summary><b>Entry &amp; exit</b> — who gets in, and what happens when they do (13 flags)</summary>
+<summary><b>Entry &amp; exit</b> — who gets in, and what happens when they do (15 flags)</summary>
 
 `entry` · `exit` · `entry-min-level` · `entry-max-level` · `player-count-limit` ·
 `teleport-on-entry` · `teleport-on-exit` · `command-on-entry` · `command-on-exit` ·
-`console-command-on-entry` · `console-command-on-exit` · `respawn-location` · `join-location`
+`console-command-on-entry` · `console-command-on-exit` · `respawn-location` · `join-location` ·
+`exit-override` · `exit-via-teleport`
+
+`exit-via-teleport` closes the obvious hole in `exit`: without it, any `/tp`, home or warp walks
+straight out of a region you can't walk out of. `exit-override` is the escape hatch that lets
+someone leave anyway, so a mis-set `exit` doesn't trap people.
+
+`player-count-limit` caps how many players may be inside at once. Everyone standing in the region
+counts towards the number, but members, owners and anyone with bypass are never turned away — so a
+region full of its own members is closed to outsiders while its members still come and go. It is
+checked when someone crosses in, on foot or riding; nobody already inside is ever pushed out by it.
 
 `command-on-*` runs as the player; `console-command-on-*` runs as the server.
 `entry-min-level` / `entry-max-level` accept a number, or a PlaceholderAPI `%placeholder%` if you
@@ -180,53 +210,98 @@ have PAPI installed — useful for gating on a level from another plugin.
 </details>
 
 <details>
-<summary><b>Mobs &amp; explosions</b> (8 flags)</summary>
+<summary><b>Mobs &amp; explosions</b> (21 flags)</summary>
 
-`mob-spawning` · `mob-damage` · `creeper-explosion` · `other-explosion` · `enderman-grief` ·
-`ghast-fireball` · `mob-drops` · `exp-drops`
+`mob-spawning` · `deny-spawn` · `mob-damage` · `creeper-explosion` · `other-explosion` ·
+`enderman-grief` · `ghast-fireball` · `wither-damage` · `enderdragon-block-damage` ·
+`ravager-grief` · `snowman-trails` · `breeze-charge-explosion` · `lightning` · `mob-drops` ·
+`exp-drops` · `raid` · `entity-transform` · `breed` · `tame` · `door-break` · `copper-golem`
+
+`raid` stops raids starting — usually the one flag a spawn town wants. `copper-golem` gates
+building one (26.x); player-built golems are outside `mob-spawning` by design.
+
+`mob-spawning` is a blanket toggle over *natural* spawns. `deny-spawn` is a list of entity types
+that may never appear, whatever put them there — spawn egg, spawner, or another plugin:
+`/wg flag spawn deny-spawn CREEPER,minecraft:phantom`.
 </details>
 
 <details>
-<summary><b>Environment</b> — fire, fluids, growth, decay (14 flags)</summary>
+<summary><b>Environment</b> — fire, fluids, growth, decay (26 flags)</summary>
 
 `fire-spread` · `lava-fire` · `lava-flow` · `water-flow` · `snow-fall` · `snow-melt` · `ice-form` ·
 `ice-melt` · `leaf-decay` · `crop-growth` · `vine-growth` · `crop-trample` · `frostwalker` ·
-`chunk-unload`
+`frosted-ice-melt` · `grass-growth` · `mycelium-spread` · `mushroom-growth` · `sculk-growth` ·
+`rock-growth` · `coral-fade` · `copper-fade` · `moisture-change` · `soil-dry` · `tree-growth` ·
+`sponge-absorb` · `chunk-unload`
+
+`tree-growth` is the one growth that reaches well past the block it started on — a sapling planted
+just outside can otherwise push its canopy straight through the border.
+
+`moisture-change` freezes farmland hydration in both directions; `soil-dry` stops only the drying
+half, which is the one that reverts farmland to dirt and breaks the crop above it.
 </details>
 
 <details>
-<summary><b>Movement</b> (5 flags)</summary>
+<summary><b>Movement</b> (6 flags)</summary>
 
-`enderpearl` · `chorus-fruit-teleport` · `glide` · `nether-portals` · `chambered-enderpearl`
+`enderpearl` · `chorus-fruit-teleport` · `glide` · `nether-portals` · `chambered-enderpearl` ·
+`portal-create`
+
+`nether-portals` governs travelling through a portal; `portal-create` governs lighting a new one.
 
 With **GSit** installed, four more appear here: `sit`, `playersit`, `pose`, `crawl`.
 </details>
 
 <details>
-<summary><b>Messages &amp; sound</b> (7 flags)</summary>
+<summary><b>Messages &amp; sound</b> (14 flags)</summary>
 
-`greeting` · `farewell` · `chat-prefix` · `chat-suffix` · `entry-deny-message` ·
-`exit-deny-message` · `play-sounds`
+`greeting` · `farewell` · `greeting-title` · `farewell-title` · `chat-prefix` · `chat-suffix` ·
+`deny-message` · `entry-deny-message` · `exit-deny-message` · `play-sounds` · `notify-enter` ·
+`notify-leave` · `send-chat` · `receive-chat`
+
+`notify-enter` / `notify-leave` announce crossings to staff holding `uworldguard.notify`. The flag
+decides which regions announce; the wording lives in `messages.yml` under the same two names, where
+`<player>` and `<region>` are filled in — reword it, recolour it, or set it to `false` to silence
+the announcements without unsetting the flags.
+`send-chat` stops people talking inside a region; `receive-chat` stops them hearing it.
+
+`deny-message` replaces the configured refusal text for build and interact denials inside the
+region; `%what%` in it expands to what was refused. `greeting-title` / `farewell-title` split on a
+literal `
+` into title and subtitle.
 
 All message flags are [MiniMessage](https://docs.advntr.dev/minimessage/) — `<red>`, `<bold>`,
 gradients, the lot. `chat-prefix` / `chat-suffix` wrap what a player says while they're inside.
 </details>
 
 <details>
-<summary><b>Player state</b> — applied continuously while inside (15 flags)</summary>
+<summary><b>Player state</b> — applied continuously while inside (24 flags)</summary>
 
 `invincible` · `godmode` · `heal-amount` · `heal-min-health` · `heal-max-health` · `game-mode` ·
 `give-effects` · `blocked-effects` · `hide-players` · `walk-speed` · `fly-speed` · `fly` ·
-`keep-inventory` · `keep-exp` · `disable-collision`
+`keep-inventory` · `keep-exp` · `disable-collision` · `natural-health-regen` ·
+`natural-hunger-drain` · `heal-delay` · `feed-delay` · `feed-amount` · `min-food` · `max-food` ·
+`time-lock` · `weather-lock`
+
+`time-lock` takes `day`/`night`/`noon`/`midnight` or a raw tick count; `weather-lock` takes `clear`
+or `downfall`. Both are client-side, so one player in an eternal-night arena doesn't change the sky
+for everyone else.
 </details>
 
 <details>
-<summary><b>Items &amp; commands</b> (15 flags)</summary>
+<summary><b>Items &amp; commands</b> (23 flags)</summary>
 
 `disable-completely` · `disable-throw` · `wind-charge` · `villager-trade` · `permit-workbenches` ·
-`inventory-craft` · `deny-item-drops` · `deny-item-pickup` · `item-durability` ·
-`allow-block-place` · `deny-block-place` · `allow-block-break` · `deny-block-break` ·
-`blocked-cmds` · `allowed-cmds`
+`inventory-craft` · `item-drop` · `item-pickup` · `deny-item-drops` · `deny-item-pickup` ·
+`item-durability` · `allow-block-place` · `deny-block-place` · `allow-block-break` ·
+`deny-block-break` · `blocked-cmds` · `allowed-cmds` · `crafter` · `hopper-transfer` ·
+`dispense` · `enchant` · `brew` · `smelt`
+
+`hopper-transfer` is judged at the destination, so it stops a hopper chain reaching under the
+border to drain a region's chests. `crafter` covers the 1.21 auto-crafting block.
+
+`item-drop` / `item-pickup` are blanket allow/deny; `deny-item-drops` / `deny-item-pickup` name
+specific materials instead.
 
 The `allow-*` / `deny-*` block lists are the fine-grained escape hatch: `deny-block-break` blocks
 those materials **even for members**, and `allow-block-break` permits them **even for outsiders**.

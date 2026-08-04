@@ -21,4 +21,10 @@ public interface RegionStore {
      * Persist all regions currently in {@code manager}.
      */
     void save(String worldName, RegionManager manager) throws Exception;
+
+    /**
+     * Release anything the backend registered outside this plugin, after the final save. A file-backed
+     * store holds nothing, so the default does nothing.
+     */
+    default void close() {}
 }

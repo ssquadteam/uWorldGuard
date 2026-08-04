@@ -9,7 +9,7 @@ import com.tricrotism.uworldguard.selection.SelectionService;
 import com.tricrotism.uworldguard.text.Messages;
 import com.tricrotism.uworldguard.util.BlockVector3;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -27,6 +27,7 @@ import xyz.xenondevs.invui.window.Window;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * InvUI region browser for one world: left-click a region to edit its flags, right-click to teleport
@@ -34,8 +35,6 @@ import java.util.List;
  */
 @NullMarked
 public final class RegionMenu {
-
-    private static final MiniMessage MM = MiniMessage.miniMessage();
 
     private final Plugin plugin;
     private final World world;
@@ -73,32 +72,46 @@ public final class RegionMenu {
 
         Window.builder()
             .setViewer(player)
-            .setTitle(MM.deserialize("<dark_gray>Regions: <aqua>" + world.getName()))
+            .setTitle(Messages.format("<dark_gray>Regions: <aqua><world>",
+                Placeholder.unparsed("world", world.getName())))
             .setUpperGui(built)
             .build()
             .open();
     }
 
+    /**
+     * A region's id and type cannot change, so those two lines are parsed once here rather than on
+     * every repaint the item does; priority and the trusted counts are left in the provider because
+     * they can be edited while the menu is open.
+     */
     private List<Item> buildItems() {
         final Collection<ProtectedRegion> regions = manager.getRegions();
         final List<Item> items = new ArrayList<>(regions.size());
         for (final ProtectedRegion region : regions) {
+            final Component name = Messages.format("<!i><yellow><id>",
+                Placeholder.unparsed("id", region.getId()));
+            final Component type = Messages.format("<!i><gray>Type: <white><type>",
+                Placeholder.unparsed("type", region.getType().name().toLowerCase(Locale.ROOT)));
             items.add(Item.builder()
-                .setItemProvider(viewer -> regionProvider(region))
+                .setItemProvider(viewer -> regionProvider(region, name, type))
                 .addClickHandler((item, click) -> onClick(region, click.player(), click.clickType()))
                 .build());
         }
         return items;
     }
 
-    private ItemBuilder regionProvider(final ProtectedRegion region) {
+    private ItemBuilder regionProvider(
+        final ProtectedRegion region, final Component name, final Component type
+    ) {
         return new ItemBuilder(materialFor(region.getType()))
-            .setName(MM.deserialize("<!i><yellow>" + region.getId()))
+            .setName(name)
             .addLoreLines(
-                MM.deserialize("<!i><gray>Type: <white>" + region.getType().name().toLowerCase()),
-                MM.deserialize("<!i><gray>Priority: <white>" + region.getPriority()),
-                MM.deserialize("<!i><gray>Owners: <white>" + region.getOwners().size()
-                    + " <gray>Members: <white>" + region.getMembers().size()),
+                type,
+                Messages.format("<!i><gray>Priority: <white><priority>",
+                    Placeholder.unparsed("priority", Integer.toString(region.getPriority()))),
+                Messages.format("<!i><gray>Owners: <white><owners> <gray>Members: <white><members>",
+                    Placeholder.unparsed("owners", Integer.toString(region.getOwners().size())),
+                    Placeholder.unparsed("members", Integer.toString(region.getMembers().size()))),
                 Component.empty(),
                 Messages.format("<!i><dark_gray>Left-click <gray>edit flags"),
                 Messages.format("<!i><dark_gray>Right-click <gray>teleport here"),
@@ -171,12 +184,18 @@ public final class RegionMenu {
         player.closeInventory();
         player.sendMessage(Messages.format("<gray>Type a name for the new region, or <red>cancel</red>."));
         chatInput.await(player.getUniqueId(), name -> {
-            if (manager.hasRegion(name)) {
-                player.sendMessage(Messages.format("<red>A region named <aqua>" + name + "</aqua> already exists."));
+            if (!ProtectedRegion.isValidId(name)) {
+                player.sendMessage(Messages.format("<red>Region names may only use letters, digits, "
+                        + "<aqua>_</aqua> and <aqua>-</aqua>, up to <aqua><max></aqua> characters.",
+                    Placeholder.unparsed("max", Integer.toString(ProtectedRegion.MAX_ID_LENGTH))));
+            } else if (manager.hasRegion(name)) {
+                player.sendMessage(Messages.format("<red>A region named <aqua><id></aqua> already exists.",
+                    Placeholder.unparsed("id", name)));
             } else {
                 final ProtectedCuboidRegion region = new ProtectedCuboidRegion(name, sel.min(), sel.max());
                 manager.addRegion(region);
-                player.sendMessage(Messages.format("<green>Created region <aqua>" + name + "</aqua>."));
+                player.sendMessage(Messages.format("<green>Created region <aqua><id></aqua>.",
+                    Placeholder.unparsed("id", name)));
             }
             open(player);
         });

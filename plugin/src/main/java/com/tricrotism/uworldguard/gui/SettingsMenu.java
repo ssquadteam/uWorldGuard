@@ -2,7 +2,8 @@ package com.tricrotism.uworldguard.gui;
 
 import com.tricrotism.uworldguard.text.MessageService;
 import com.tricrotism.uworldguard.text.Messages;
-import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
@@ -23,8 +24,6 @@ import java.util.List;
  */
 @NullMarked
 public final class SettingsMenu {
-
-    private static final MiniMessage MM = MiniMessage.miniMessage();
 
     private final Plugin plugin;
     private final MessageService messages;
@@ -61,18 +60,24 @@ public final class SettingsMenu {
             .open();
     }
 
+    /**
+     * The key names the item after are fixed, so they are parsed once here; the value line stays in
+     * the provider because editing an entry repaints the item to show the new text.
+     */
     private List<Item> messageItems() {
         final List<Item> items = new ArrayList<>();
         for (final String key : messages.keys()) {
+            final Component name = Messages.format("<!i><yellow><key>", Placeholder.unparsed("key", key));
             items.add(Item.builder()
                 .setItemProvider(viewer -> {
                     final String value = messages.raw(key);
                     return new ItemBuilder(Material.PAPER)
-                        .setName(MM.deserialize("<!i><yellow>" + key))
+                        .setName(name)
                         .addLoreLines(
-                            MM.deserialize("<!i><gray>Value: <white>"
-                                + (value == null || value.isBlank() || "false".equalsIgnoreCase(value)
-                                ? "<disabled>" : value)),
+                            Messages.format("<!i><gray>Value: <white><value>",
+                                Placeholder.unparsed("value",
+                                    value == null || value.isBlank() || "false".equalsIgnoreCase(value)
+                                        ? "<disabled>" : value)),
                             Messages.format("<!i><dark_gray>Click to edit (chat)"));
                 })
                 .addClickHandler((item, click) -> promptMessage(click.player(), key))
@@ -83,11 +88,13 @@ public final class SettingsMenu {
 
     private void promptMessage(final Player player, final String key) {
         player.closeInventory();
-        player.sendMessage(Messages.format("<gray>Type the new text for <aqua>" + key
-            + "</aqua>, <red>false</red> to disable, or <red>cancel</red>."));
+        player.sendMessage(Messages.format("<gray>Type the new text for <aqua><key></aqua>, "
+                + "<red>false</red> to disable, or <red>cancel</red>.",
+            Placeholder.unparsed("key", key)));
         chatInput.await(player.getUniqueId(), value -> {
             messages.setMessage(key, value);
-            player.sendMessage(Messages.format("<green>Updated <aqua>" + key + "</aqua>."));
+            player.sendMessage(Messages.format("<green>Updated <aqua><key></aqua>.",
+                Placeholder.unparsed("key", key)));
             open(player);
         });
     }
@@ -97,7 +104,8 @@ public final class SettingsMenu {
             .setItemProvider(viewer -> new ItemBuilder(Material.CLOCK)
                 .setName(Messages.format("<!i><yellow>Message cooldown"))
                 .addLoreLines(
-                    MM.deserialize("<!i><gray>Seconds: <white>" + messages.cooldownSeconds()),
+                    Messages.format("<!i><gray>Seconds: <white><seconds>",
+                        Placeholder.unparsed("seconds", Long.toString(messages.cooldownSeconds()))),
                     Messages.format("<!i><dark_gray>Click to edit (chat)")))
             .addClickHandler((item, click) -> promptCooldown(click.player()))
             .build();

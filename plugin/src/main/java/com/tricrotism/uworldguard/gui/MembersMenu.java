@@ -4,7 +4,7 @@ import com.tricrotism.uworldguard.domain.DefaultDomain;
 import com.tricrotism.uworldguard.region.ProtectedRegion;
 import com.tricrotism.uworldguard.region.RegionManager;
 import com.tricrotism.uworldguard.text.Messages;
-import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
@@ -29,11 +29,10 @@ import java.util.UUID;
 @NullMarked
 public final class MembersMenu {
 
-    private static final MiniMessage MM = MiniMessage.miniMessage();
-
     private final Plugin plugin;
     private final RegionManager manager;
     private final ProtectedRegion region;
+    private final String regionId;
     private final ChatInputService chatInput;
     private @Nullable PagedGui<Item> gui;
 
@@ -42,6 +41,7 @@ public final class MembersMenu {
         this.plugin = plugin;
         this.manager = manager;
         this.region = region;
+        this.regionId = region.getId();
         this.chatInput = chatInput;
     }
 
@@ -66,7 +66,8 @@ public final class MembersMenu {
 
         Window.builder()
             .setViewer(player)
-            .setTitle(MM.deserialize("<dark_gray>Members: <aqua>" + region.getId()))
+            .setTitle(Messages.format("<dark_gray>Members: <aqua><id>",
+                Placeholder.unparsed("id", region.getId())))
             .setUpperGui(built)
             .build()
             .open();
@@ -86,11 +87,11 @@ public final class MembersMenu {
     private Item entry(final UUID uuid, final boolean owner) {
         return Item.builder()
             .setItemProvider(new ItemBuilder(Material.PLAYER_HEAD)
-                .setName(MM.deserialize("<!i><yellow>" + nameOf(uuid)))
+                .setName(Messages.format("<!i><yellow><name>", Placeholder.unparsed("name", nameOf(uuid))))
                 .addLoreLines(
-                    MM.deserialize("<!i><gray>" + (owner ? "Owner" : "Member")),
+                    Messages.format(owner ? "<!i><gray>Owner" : "<!i><gray>Member"),
                     Messages.format("<!i><dark_gray>Click to remove")))
-            .addClickHandler((item, click) -> {
+            .addClickHandler((_, _) -> {
                 (owner ? region.getOwners() : region.getMembers()).removePlayer(uuid);
                 manager.markDirty();
                 if (gui != null) {
@@ -103,7 +104,7 @@ public final class MembersMenu {
     private Item addItem(final boolean owner) {
         return Item.builder()
             .setItemProvider(new ItemBuilder(owner ? Material.GOLDEN_HELMET : Material.LEATHER_HELMET)
-                .setName(MM.deserialize("<!i><green>Add " + (owner ? "owner" : "member")))
+                .setName(Messages.format(owner ? "<!i><green>Add owner" : "<!i><green>Add member"))
                 .addLoreLines(Messages.format("<!i><dark_gray>Click, then type a player name")))
             .addClickHandler((item, click) -> promptAdd(click.player(), owner))
             .build();
@@ -115,21 +116,37 @@ public final class MembersMenu {
         chatInput.await(player.getUniqueId(), name ->
             Bukkit.getAsyncScheduler().runNow(plugin, task -> {
                 final OfflinePlayer target = Bukkit.getOfflinePlayer(name);
+                if (!target.isOnline() && !target.hasPlayedBefore()) {
+                    player.sendMessage(Messages.format("<red>No player named <aqua><player></aqua> "
+                        + "has played here.", Placeholder.unparsed("player", name)));
+                    player.getScheduler().run(plugin, t -> open(player), null);
+                    return;
+                }
+                if (manager.getRegion(regionId) != region) {
+                    player.sendMessage(Messages.format("<red>Region <aqua><id></aqua> no longer exists.",
+                        Placeholder.unparsed("id", regionId)));
+                    return;
+                }
                 final DefaultDomain domain = owner ? region.getOwners() : region.getMembers();
                 domain.addPlayer(target.getUniqueId());
                 manager.markDirty();
-                player.sendMessage(Messages.format("<green>Added <aqua>" + name + "</aqua> as "
-                    + (owner ? "owner" : "member") + "."));
+                player.sendMessage(Messages.format("<green>Added <aqua><player></aqua> as <role>.",
+                    Placeholder.unparsed("player", name),
+                    Placeholder.unparsed("role", owner ? "owner" : "member")));
                 player.getScheduler().run(plugin, t -> open(player), null);
             }));
     }
 
+    /**
+     * A display name for a trusted player. Online is a field read; offline is not resolved.
+     *
+     * <p>{@code OfflinePlayer.getName()} reads and decompresses that player's {@code .dat} off disk
+     * despite looking like a getter, and this runs once per entry every time the menu is built —
+     * including the rebuild after each removal click, on the thread the click arrived on. A short
+     * uuid is a worse label than a name, but it is not worth blocking a tick per member to avoid.
+     */
     private static String nameOf(final UUID uuid) {
         final Player online = Bukkit.getPlayer(uuid);
-        if (online != null) {
-            return online.getName();
-        }
-        final String name = Bukkit.getOfflinePlayer(uuid).getName();
-        return name != null ? name : uuid.toString().substring(0, 8);
+        return online != null ? online.getName() : uuid.toString().substring(0, 8);
     }
 }

@@ -3,6 +3,7 @@ package com.tricrotism.uworldguard.listeners;
 import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.region.RegionQuery;
+import com.tricrotism.uworldguard.text.MessageService;
 import com.tricrotism.uworldguard.util.Locations;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
@@ -20,9 +21,11 @@ import org.jspecify.annotations.NullMarked;
 public final class DeathListener implements Listener {
 
     private final RegionQuery query;
+    private final MessageService messages;
 
-    public DeathListener(final RegionQuery query) {
+    public DeathListener(final RegionQuery query, final MessageService messages) {
         this.query = query;
+        this.messages = messages;
     }
 
     @EventHandler(priority = EventPriority.HIGH)
@@ -51,7 +54,7 @@ public final class DeathListener implements Listener {
         if (value == null) {
             return;
         }
-        final Location target = Locations.parse(value);
+        final Location target = Locations.parse(messages.expand(player, value));
         if (target != null) {
             event.setRespawnLocation(target);
         }

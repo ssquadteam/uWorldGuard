@@ -4,6 +4,7 @@ import com.tricrotism.uworldguard.config.Bypass;
 import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.flags.StateFlag;
+import com.tricrotism.uworldguard.region.ApplicableRegionSet;
 import com.tricrotism.uworldguard.region.RegionQuery;
 import com.tricrotism.uworldguard.text.MessageService;
 import org.bukkit.Material;
@@ -15,10 +16,12 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.inventory.CraftItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.inventory.EquipmentSlot;
 import org.jspecify.annotations.NullMarked;
 
 import java.util.EnumSet;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * {@code permit-workbenches} blocks opening work-stations (crafting table, anvils, ender chest, …)
@@ -31,6 +34,9 @@ public final class WorkbenchListener implements Listener {
         Material.CRAFTING_TABLE, Material.ANVIL, Material.CHIPPED_ANVIL, Material.DAMAGED_ANVIL,
         Material.ENDER_CHEST, Material.SMITHING_TABLE, Material.GRINDSTONE, Material.LOOM,
         Material.CARTOGRAPHY_TABLE, Material.STONECUTTER, Material.ENCHANTING_TABLE);
+
+    private static final Set<Material> ANVILS = EnumSet.of(
+        Material.ANVIL, Material.CHIPPED_ANVIL, Material.DAMAGED_ANVIL);
 
     private final RegionQuery query;
     private final MessageService messages;
@@ -45,7 +51,7 @@ public final class WorkbenchListener implements Listener {
         if (EventGate.disabled(event)) {
             return;
         }
-        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) {
+        if (event.getAction() != Action.RIGHT_CLICK_BLOCK || event.getHand() != EquipmentSlot.HAND) {
             return;
         }
         final Block block = event.getClickedBlock();
@@ -53,13 +59,21 @@ public final class WorkbenchListener implements Listener {
             return;
         }
         final Player player = event.getPlayer();
-        if (!query.getApplicableRegions(block).testState(Flags.PERMIT_WORKBENCHES, player.getUniqueId())) {
-            if (Bypass.has(player)) {
-                return;
-            }
-            event.setCancelled(true);
-            messages.sendDeny(player, Flags.PERMIT_WORKBENCHES);
+        final UUID uuid = player.getUniqueId();
+        final ApplicableRegionSet set = query.getApplicableRegions(block);
+        final StateFlag denied;
+        if (ANVILS.contains(block.getType()) && !set.testState(Flags.USE_ANVIL, uuid)) {
+            denied = Flags.USE_ANVIL;
+        } else if (!set.testState(Flags.PERMIT_WORKBENCHES, uuid)) {
+            denied = Flags.PERMIT_WORKBENCHES;
+        } else {
+            return;
         }
+        if (Bypass.has(player)) {
+            return;
+        }
+        event.setCancelled(true);
+        messages.sendDeny(player, denied);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)

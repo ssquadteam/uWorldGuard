@@ -8,6 +8,15 @@ api-version: '26.2'
 load: STARTUP
 folia-supported: true
 
+# WorldGuard 7 API compatibility layer: satisfies plugins that (soft)depend on "WorldGuard"
+# and makes getPlugin("WorldGuard") resolve to uWorldGuard. The bundled com.sk89q.worldguard.*
+# classes are a clean-room reimplementation (LGPL-3.0, see META-INF/licenses/wg-compat) that
+# delegates to uWorldGuard's engine. Requires WorldEdit/FAWE at runtime to activate.
+provides: [ WorldGuard ]
+# Paper-plugin consumers of the WorldGuard API can't be forced to declare join-classpath on us,
+# so open our classloader to them. Legacy Bukkit plugins see all plugin classes regardless.
+has-open-classloader: true
+
 dependencies:
     server:
         PacketEvents:
@@ -39,6 +48,9 @@ permissions:
             Holding this node alone does nothing — the holder must also run /uwg bypass to arm it,
             and it turns itself off again when they log out.
         default: false
+    uworldguard.compat:
+        description: View WorldGuard API compatibility layer diagnostics (/uwg compat).
+        default: op
     uworldguard.notify:
         description: Receive notify-enter / notify-leave announcements.
         default: op

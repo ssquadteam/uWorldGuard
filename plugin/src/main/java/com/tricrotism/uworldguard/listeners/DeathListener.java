@@ -5,6 +5,7 @@ import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.region.RegionQuery;
 import com.tricrotism.uworldguard.text.MessageService;
 import com.tricrotism.uworldguard.util.Locations;
+import com.tricrotism.uworldguard.wgcompat.SessionDispatch;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -51,12 +52,16 @@ public final class DeathListener implements Listener {
         }
         final Player player = event.getPlayer();
         final String value = query.queryValue(player, Flags.RESPAWN_LOCATION);
-        if (value == null) {
-            return;
+        if (value != null) {
+            final Location target = Locations.parse(messages.expand(player, value));
+            if (target != null) {
+                event.setRespawnLocation(target);
+            }
         }
-        final Location target = Locations.parse(messages.expand(player, value));
-        if (target != null) {
-            event.setRespawnLocation(target);
+
+        if (SessionDispatch.ACTIVE) {
+            SessionDispatch.testMove(player, player.getLocation(), event.getRespawnLocation(),
+                SessionDispatch.Move.RESPAWN);
         }
     }
 }

@@ -92,7 +92,7 @@ public final class FlagMenu {
 
     /**
      * The landing page's per-category name and flag count, both fixed for the life of the server:
-     * flags only register during enable. Rendered on demand, the eight tiles cost a walk of every
+     * flags only register during enable. Rendered on demand, the tiles cost a walk of every
      * registered flag per tile plus sixteen uncached MiniMessage parses — on every open and every
      * press of Back, for an answer that cannot change.
      */
@@ -263,6 +263,10 @@ public final class FlagMenu {
     }
 
     private static String typeHint(final Flag<?> flag) {
+        final String declared = flag.getValueHint();
+        if (declared != null) {
+            return declared;
+        }
         if (flag instanceof StateFlag) {
             return "allow / deny";
         }
@@ -340,7 +344,7 @@ public final class FlagMenu {
         player.sendMessage(Messages.format(
             "<gray>Type a new value for <aqua>" + flag.getName() + "</aqua> in chat, or <red>cancel</red>."));
         chatInput.await(player.getUniqueId(), value -> {
-            if (applyValue(region, flag, value)) {
+            if (applyValue(region, flag, value, player)) {
                 manager.markDirty();
             } else {
                 player.sendMessage(Messages.format("<red>Invalid value for <aqua>" + flag.getName() + "</aqua>."));
@@ -349,8 +353,10 @@ public final class FlagMenu {
         });
     }
 
-    private static <T> boolean applyValue(final ProtectedRegion region, final Flag<T> flag, final String value) {
-        final T parsed = flag.parse(value);
+    private static <T> boolean applyValue(
+        final ProtectedRegion region, final Flag<T> flag, final String value, final Player setter
+    ) {
+        final T parsed = flag.parse(value, setter);
         if (parsed == null) {
             return false;
         }
@@ -368,6 +374,7 @@ public final class FlagMenu {
             case ITEMS -> Material.CHEST;
             case ENTRY -> Material.IRON_DOOR;
             case PLAYER -> Material.PLAYER_HEAD;
+            case EXTENSION -> Material.COMMAND_BLOCK;
         };
     }
 }

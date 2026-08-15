@@ -4,6 +4,8 @@ import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.region.ApplicableRegionSet;
 import com.tricrotism.uworldguard.region.RegionContainerImpl;
 import com.tricrotism.uworldguard.region.RegionQuery;
+import com.tricrotism.uworldguard.wgcompat.SessionDispatch;
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bukkit.WeatherType;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -37,6 +39,7 @@ public final class PlayerTickService {
     private final RegionContainerImpl container;
     private final RegionQuery query;
     private long seconds;
+    private volatile @Nullable ScheduledTask task;
 
     public PlayerTickService(final Plugin plugin, final RegionContainerImpl container, final RegionQuery query) {
         this.plugin = plugin;
@@ -45,8 +48,10 @@ public final class PlayerTickService {
     }
 
     public void start() {
-        plugin.getServer().getGlobalRegionScheduler().runAtFixedRate(plugin, task -> {
-            if (!container.anyRegionUses(Flags.HEAL_AMOUNT)
+        task = plugin.getServer().getGlobalRegionScheduler().runAtFixedRate(plugin, _ -> {
+            final boolean sessions = SessionDispatch.ACTIVE;
+            if (!sessions
+                && !container.anyRegionUses(Flags.HEAL_AMOUNT)
                 && !container.anyRegionUses(Flags.FEED_AMOUNT)
                 && !container.anyRegionUses(Flags.TIME_LOCK)
                 && !container.anyRegionUses(Flags.WEATHER_LOCK)
@@ -56,12 +61,33 @@ public final class PlayerTickService {
             }
             final long tick = ++seconds;
             for (final Player player : plugin.getServer().getOnlinePlayers()) {
-                player.getScheduler().run(plugin, t -> apply(player, tick), null);
+                player.getScheduler().run(plugin, t -> apply(player, tick, sessions), null);
             }
         }, 20L, 20L);
     }
 
-    private void apply(final Player player, final long tick) {
+    /**
+     * Cancels the tick. Paper drops a plugin's tasks on disable anyway, but holding the handle means
+     * the service can be stopped without one — and matches the poll and the autosave, which hold
+     * theirs so a reload can retune them.
+     */
+    public void stop() {
+        final ScheduledTask running = task;
+        if (running != null) {
+            running.cancel();
+            task = null;
+        }
+    }
+
+    /**
+     * WorldGuard session handlers tick here rather than on their own task: this one already fans out
+     * to every player's entity scheduler once a second, which is the granularity WorldGuard's own
+     * tick-driven handlers work at.
+     */
+    private void apply(final Player player, final long tick, final boolean sessions) {
+        if (sessions) {
+            SessionDispatch.tick(player);
+        }
         final ApplicableRegionSet regions = query.getApplicableRegions(player);
         if (regions.worldUses(Flags.HEAL_AMOUNT) && due(tick, regions.queryValue(Flags.HEAL_DELAY))) {
             heal(player, regions);

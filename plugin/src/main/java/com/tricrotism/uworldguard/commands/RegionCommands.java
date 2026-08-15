@@ -100,7 +100,8 @@ public final class RegionCommands {
         Map.entry("menu", "Menus"),
         Map.entry("settings", "Menus"),
         Map.entry("reload", "Administration"),
-        Map.entry("migrate", "Administration"));
+        Map.entry("migrate", "Administration"),
+        Map.entry("compat", "Administration"));
 
     private static final List<String> GROUP_ORDER = List.of(
         "Creating regions", "Inspecting", "Configuring", "Owners & members",
@@ -543,7 +544,7 @@ public final class RegionCommands {
             }
         }
 
-        if (!applyFlag(region, flag, value)) {
+        if (!applyFlag(region, flag, value, asPlayer(sender))) {
             error(sender, "Invalid value for flag <aqua><flag></aqua>.", Placeholder.unparsed("flag", flag.getName()));
             return;
         }
@@ -855,6 +856,11 @@ public final class RegionCommands {
     @Suggestions("flag-values")
     public List<String> suggestFlagValues(final CommandContext<Source> ctx, final String input) {
         final Flag<?> flag = Flags.get(ctx.getOrDefault("flag", ""));
+        if (flag == null) return List.of();
+
+        final List<String> declared = flag.getValueSuggestions();
+        if (!declared.isEmpty()) return declared;
+
         if (flag instanceof StateFlag) return List.of("allow", "deny");
         if (flag instanceof BooleanFlag) return List.of("true", "false");
         if (flag == Flags.GAME_MODE) return List.of("survival", "creative", "adventure", "spectator");
@@ -870,8 +876,10 @@ public final class RegionCommands {
         return List.of();
     }
 
-    private static <T> boolean applyFlag(final ProtectedRegion region, final Flag<T> flag, final String value) {
-        final T parsed = flag.parse(value);
+    private static <T> boolean applyFlag(
+        final ProtectedRegion region, final Flag<T> flag, final String value, final @Nullable Player setter
+    ) {
+        final T parsed = flag.parse(value, setter);
         if (parsed == null) return false;
 
         region.setFlag(flag, parsed);

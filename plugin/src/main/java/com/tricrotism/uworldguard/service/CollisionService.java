@@ -1,5 +1,6 @@
 package com.tricrotism.uworldguard.service;
 
+import com.tricrotism.uworldguard.packet.PacketHooks;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
@@ -28,8 +29,13 @@ public final class CollisionService {
     private static final String TEAM_NAME = "uwg_nocollision";
 
     private final Plugin plugin;
-    private final Set<UUID> disabled = ConcurrentHashMap.newKeySet();
-    private @Nullable Team team;
+    /**
+     * Player to the team entry added for them. Team entries are names, not UUIDs, so the name used
+     * to add has to be the name used to remove — a player who changes name while inside the region
+     * would otherwise leave a stale entry behind and stay uncollidable for the rest of the session.
+     */
+    private final ConcurrentHashMap<UUID, String> disabled = new ConcurrentHashMap<>();
+    private volatile @Nullable Team team;
 
     public CollisionService(final Plugin plugin) {
         this.plugin = plugin;
@@ -46,20 +52,33 @@ public final class CollisionService {
             return;
         }
         final UUID uuid = player.getUniqueId();
-        final String entry = player.getName();
         if (collisionDisabled) {
-            if (disabled.add(uuid)) {
+            final String entry = player.getName();
+            if (disabled.putIfAbsent(uuid, entry) == null) {
                 Bukkit.getGlobalRegionScheduler().execute(plugin, () -> applyEntry(entry, true));
             }
-        } else if (disabled.remove(uuid)) {
+            return;
+        }
+        final String entry = disabled.remove(uuid);
+        if (entry != null) {
             Bukkit.getGlobalRegionScheduler().execute(plugin, () -> applyEntry(entry, false));
         }
     }
 
     /**
      * Runs on the global region thread, where scoreboard access is safe.
+     *
+     * <p>The packet half rides the same hop. The server-side team lives on the main scoreboard, which
+     * a player another plugin has put on a per-player scoreboard never sees — so their client keeps
+     * pushing even though the server has stopped. When PacketEvents is available the team is sent
+     * straight to those players; collision is predicted client-side, so both halves have to agree.
+     * It cannot run on the caller's thread: it reads every online player's scoreboard, and the
+     * moving player's region thread owns none of them.
      */
     private void applyEntry(final String entry, final boolean add) {
+        if (PacketHooks.ACTIVE) {
+            PacketHooks.collision(entry, add);
+        }
         final Team resolved = team();
         if (resolved == null) {
             return;
@@ -77,13 +96,16 @@ public final class CollisionService {
      * free after uWorldGuard is gone, with nothing left to explain why.
      */
     public void shutdown() {
-        final Team resolved = team;
-        if (resolved == null) {
-            disabled.clear();
-            return;
+        if (PacketHooks.ACTIVE) {
+            for (final String entry : disabled.values()) {
+                PacketHooks.collision(entry, false);
+            }
         }
-        for (final String entry : Set.copyOf(resolved.getEntries())) {
-            resolved.removeEntry(entry);
+        final Team resolved = team;
+        if (resolved != null) {
+            for (final String entry : Set.copyOf(resolved.getEntries())) {
+                resolved.removeEntry(entry);
+            }
         }
         disabled.clear();
     }

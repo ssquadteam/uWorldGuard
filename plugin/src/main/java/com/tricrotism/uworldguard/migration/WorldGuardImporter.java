@@ -2,8 +2,8 @@ package com.tricrotism.uworldguard.migration;
 
 import com.tricrotism.uworldguard.domain.DefaultDomain;
 import com.tricrotism.uworldguard.flags.Flag;
-import com.tricrotism.uworldguard.flags.Flags;
 import com.tricrotism.uworldguard.flags.RegionGroup;
+import com.tricrotism.uworldguard.flags.WgFlagNames;
 import com.tricrotism.uworldguard.region.*;
 import com.tricrotism.uworldguard.util.BlockVector3;
 import net.kyori.adventure.text.minimessage.MiniMessage;
@@ -24,7 +24,7 @@ import java.util.regex.Pattern;
  * {@link RegionManager}. WorldGuard's flag names are mirrored by {@link Flags}, so flags
  * round-trip by name; cuboid, poly2d and global regions are supported (cylinder/sphere are
  * uWorldGuard-only and never appear in WorldGuard data). Legacy name-based domain entries are not
- * migrated. Flags WorldGuard spells differently go through {@link #FLAG_ALIASES}, legacy colour codes
+ * migrated. Flags WorldGuard spells differently go through {@link WgFlagNames}, legacy colour codes
  * become MiniMessage, and WorldGuard's nested location blocks become uWorldGuard's location strings.
  *
  * <p>Pure parsing + in-memory population — no Bukkit world access — so it is safe to run on
@@ -32,20 +32,6 @@ import java.util.regex.Pattern;
  */
 @NullMarked
 public final class WorldGuardImporter {
-
-    /**
-     * WorldGuard flag names that uWorldGuard implements under a different name. Only exact
-     * behavioural equivalents belong here — a flag whose uWorldGuard counterpart is broader or
-     * narrower is deliberately left to be reported as unmapped rather than silently widened.
-     */
-    private static final Map<String, String> FLAG_ALIASES = Map.of(
-        "block-trampling", "crop-trample",
-        "wind-charge-burst", "wind-charge",
-        "frosted-ice-form", "frostwalker",
-        "min-heal", "heal-min-health",
-        "max-heal", "heal-max-health",
-        "spawn", "respawn-location"
-    );
 
     /**
      * Matches a legacy colour/format code, so conversion only runs on values that carry one.
@@ -265,7 +251,7 @@ public final class WorldGuardImporter {
 
     /**
      * Copies one region's flags across, resolving WorldGuard's name to ours directly, then through
-     * {@link #FLAG_ALIASES}. Anything still unresolved is counted rather than dropped in silence, so
+     * {@link WgFlagNames}. Anything still unresolved is counted rather than dropped in silence, so
      * the caller can tell the admin exactly what did not come over.
      */
     private static void readFlags(
@@ -298,15 +284,10 @@ public final class WorldGuardImporter {
     }
 
     /**
-     * Resolves a WorldGuard flag name to ours, directly then through {@link #FLAG_ALIASES}.
+     * Resolves a WorldGuard flag name to ours, directly then through {@link WgFlagNames}.
      */
     private static @Nullable Flag<?> resolve(final String name) {
-        final Flag<?> direct = Flags.get(name);
-        if (direct != null) {
-            return direct;
-        }
-        final String alias = FLAG_ALIASES.get(name.toLowerCase(Locale.ROOT));
-        return alias == null ? null : Flags.get(alias);
+        return WgFlagNames.resolve(name);
     }
 
     private static <T> void applyFlag(

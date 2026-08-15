@@ -11,9 +11,11 @@ import com.tricrotism.uworldguard.region.ProtectedRegion;
 import com.tricrotism.uworldguard.region.RegionQuery;
 import com.tricrotism.uworldguard.service.ChamberedPearlTracker;
 import com.tricrotism.uworldguard.service.CollisionService;
+import com.tricrotism.uworldguard.service.PendingRestores;
 import com.tricrotism.uworldguard.text.ChatTags;
 import com.tricrotism.uworldguard.text.MessageService;
 import com.tricrotism.uworldguard.util.Locations;
+import com.tricrotism.uworldguard.wgcompat.SessionDispatch;
 import io.papermc.paper.event.entity.EntityMoveEvent;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import net.kyori.adventure.text.Component;
@@ -58,6 +60,7 @@ public final class MovementListener implements Listener {
     private final CollisionService collision;
     private final ChamberedPearlTracker pearls;
     private final ChatTags chatTags;
+    private final PendingRestores restores;
     private final Map<UUID, GameMode> savedGameModes = new ConcurrentHashMap<>();
     private final Map<UUID, Float> savedWalkSpeed = new ConcurrentHashMap<>();
     private final Map<UUID, Float> savedFlySpeed = new ConcurrentHashMap<>();
@@ -77,12 +80,12 @@ public final class MovementListener implements Listener {
      * zero by {@code /uwg reload} on whatever thread that arrived on, so the writes have to publish.
      */
     private volatile int sweepTick;
-    private @Nullable ScheduledTask pollTask;
+    private volatile @Nullable ScheduledTask pollTask;
 
     public MovementListener(
         final Plugin plugin, final RegionQuery query, final MessageService messages,
         final CollisionService collision, final ChamberedPearlTracker pearls, final ChatTags chatTags,
-        final Settings settings
+        final PendingRestores restores, final Settings settings
     ) {
         this.plugin = plugin;
         this.query = query;
@@ -90,6 +93,7 @@ public final class MovementListener implements Listener {
         this.collision = collision;
         this.pearls = pearls;
         this.chatTags = chatTags;
+        this.restores = restores;
         readSettings(settings);
     }
 
@@ -120,6 +124,11 @@ public final class MovementListener implements Listener {
         final ApplicableRegionSet toSet = query.getApplicableRegions(to);
 
         if (processCrossing(player, to.getWorld(), fromSet, toSet)) {
+            event.setCancelled(true);
+            return;
+        }
+        if (SessionDispatch.ACTIVE
+            && SessionDispatch.testMove(player, from, to, SessionDispatch.selfMove(player)) != null) {
             event.setCancelled(true);
             return;
         }
@@ -181,56 +190,57 @@ public final class MovementListener implements Listener {
      * their session — the hidden-entity list CraftBukkit keeps is keyed by plugin and is not swept
      * when one unloads.
      *
-     * <p>The plugin is still enabled while {@code onDisable} runs, so each restore can still be
-     * scheduled onto the thread that owns the player, which is the only one allowed to make it.
+     * <p>Every restore runs inline, and only for the players the disabling thread already owns.
+     * Scheduling was the obvious way to reach the rest and does not work: an entity task never runs
+     * inline, the earliest it could fire is the owning region's next tick, and by then this plugin's
+     * tasks have been cancelled with it. Worse, the plugin counts as disabled for the whole of
+     * {@code onDisable} — {@code JavaPlugin.setEnabled} clears the flag before calling it — so the
+     * scheduling call can throw and take the rest of the teardown, region saving included, with it.
+     *
+     * <p>The owed state is read from {@link PendingRestores} rather than from the four maps here,
+     * because that is the copy that also survives a crash — the maps and it are kept in step by
+     * {@link #applyState}. Anything this cannot reach simply stays in it, and the final write on the
+     * way out leaves it on disk to be replayed when that player next logs in. Hiding is the
+     * exception: it is session state a disconnect clears anyway, so there is nothing to persist.
      */
     public void shutdown() {
-        savedGameModes.forEach((uuid, mode) -> {
+        for (final Map.Entry<UUID, PendingRestores.State> owed : restores.outstanding().entrySet()) {
+            final UUID uuid = owed.getKey();
             final Player player = Bukkit.getPlayer(uuid);
-            if (player != null) {
-                player.getScheduler().run(plugin, task -> player.setGameMode(mode), null);
+            if (player == null || !plugin.getServer().isOwnedByCurrentRegion(player)) {
+                continue;
             }
-        });
+            apply(player, owed.getValue());
+            restores.forget(uuid);
+        }
         savedGameModes.clear();
-
-        savedWalkSpeed.forEach((uuid, saved) -> {
-            final Player player = Bukkit.getPlayer(uuid);
-            if (player != null) {
-                final float speed = saved;
-                player.getScheduler().run(plugin, task -> player.setWalkSpeed(speed), null);
-            }
-        });
         savedWalkSpeed.clear();
-
-        savedFlySpeed.forEach((uuid, saved) -> {
-            final Player player = Bukkit.getPlayer(uuid);
-            if (player != null) {
-                final float speed = saved;
-                player.getScheduler().run(plugin, task -> player.setFlySpeed(speed), null);
-            }
-        });
         savedFlySpeed.clear();
-
-        savedAllowFlight.forEach((uuid, saved) -> {
-            final Player player = Bukkit.getPlayer(uuid);
-            if (player != null && !saved) {
-                player.getScheduler().run(plugin, task -> player.setAllowFlight(false), null);
-            }
-        });
         savedAllowFlight.clear();
+        restores.flushNow();
 
         for (final UUID viewerId : hidden) {
             final Player viewer = Bukkit.getPlayer(viewerId);
-            if (viewer == null) {
+            if (viewer == null || !plugin.getServer().isOwnedByCurrentRegion(viewer)) {
                 continue;
             }
             for (final Player other : Bukkit.getOnlinePlayers()) {
                 if (other != viewer) {
-                    other.getScheduler().run(plugin, task -> viewer.showPlayer(plugin, other), null);
+                    viewer.showPlayer(plugin, other);
                 }
             }
         }
         hidden.clear();
+    }
+
+    /**
+     * Drops every tracked position that points into {@code world}. The values are {@link Location}s,
+     * which hold a strong reference to their world — left behind, an unloaded world stays reachable
+     * through anyone who was standing in it and is still online. Same reason
+     * {@code WandSelectionProvider} forgets its corners.
+     */
+    public void forgetWorld(final World world) {
+        lastPosition.values().removeIf(location -> location.getWorld() == world);
     }
 
     /**
@@ -285,6 +295,11 @@ public final class MovementListener implements Listener {
 
         final ApplicableRegionSet fromSet = query.getApplicableRegions(last);
         if (processCrossing(player, current.getWorld(), fromSet, toSet)) {
+            player.teleportAsync(last);
+            return;
+        }
+        if (SessionDispatch.ACTIVE
+            && SessionDispatch.testMove(player, last, current, SessionDispatch.selfMove(player)) != null) {
             player.teleportAsync(last);
             return;
         }
@@ -457,6 +472,7 @@ public final class MovementListener implements Listener {
         }
 
         final boolean limited = entering && toSet.worldUses(Flags.PLAYER_COUNT_LIMIT);
+        final boolean sessions = SessionDispatch.ACTIVE;
         final World world = to.getWorld();
 
         List<Player> denied = null;
@@ -469,7 +485,9 @@ public final class MovementListener implements Listener {
                 messages.sendFlag(player, toSet.queryValue(Flags.ENTRY_DENY_MESSAGE), "entry-denied");
             } else if (leaving && !fromSet.testState(Flags.EXIT, uuid) && !isMember(fromSet, uuid)) {
                 messages.sendFlag(player, fromSet.queryValue(Flags.EXIT_DENY_MESSAGE), "exit-denied");
-            } else if (!limited || !countDenied(world, player, uuid, fromSet, toSet)) {
+            } else if ((!limited || !countDenied(world, player, uuid, fromSet, toSet))
+                && (!sessions
+                || SessionDispatch.testMove(player, from, to, SessionDispatch.Move.RIDE) == null)) {
                 continue;
             }
             if (denied == null) {
@@ -518,6 +536,14 @@ public final class MovementListener implements Listener {
             if (!set.testState(Flags.ENTRY, player.getUniqueId()) && !isMember(set, player.getUniqueId())) {
                 event.setCancelled(true);
                 messages.sendFlag(player, set.queryValue(Flags.ENTRY_DENY_MESSAGE), "entry-denied");
+                return;
+            }
+        }
+        if (SessionDispatch.ACTIVE) {
+            final Location seat = mount.getLocation();
+            if (SessionDispatch.testMove(player, player.getLocation(), seat,
+                SessionDispatch.Move.EMBARK) != null) {
+                event.setCancelled(true);
                 return;
             }
         }
@@ -773,25 +799,29 @@ public final class MovementListener implements Listener {
      */
     private void applyState(final Player player, final ApplicableRegionSet toSet) {
         final UUID uuid = player.getUniqueId();
+        boolean owedChanged = false;
 
         final GameMode mode = toSet.worldUses(Flags.GAME_MODE)
             ? parseGameMode(toSet.queryValue(Flags.GAME_MODE)) : null;
         if (mode != null) {
             if (player.getGameMode() != mode) {
-                savedGameModes.putIfAbsent(uuid, player.getGameMode());
+                owedChanged |= savedGameModes.putIfAbsent(uuid, player.getGameMode()) == null;
                 player.setGameMode(mode);
             }
         } else if (!savedGameModes.isEmpty()) {
             final GameMode saved = savedGameModes.remove(uuid);
-            if (saved != null && player.getGameMode() != saved) {
-                player.setGameMode(saved);
+            if (saved != null) {
+                owedChanged = true;
+                if (player.getGameMode() != saved) {
+                    player.setGameMode(saved);
+                }
             }
         }
 
         final Double walk = toSet.worldUses(Flags.WALK_SPEED) ? toSet.queryValue(Flags.WALK_SPEED) : null;
         if (walk != null) {
             if (savedWalkSpeed.get(uuid) == null) {
-                savedWalkSpeed.putIfAbsent(uuid, player.getWalkSpeed());
+                owedChanged |= savedWalkSpeed.putIfAbsent(uuid, player.getWalkSpeed()) == null;
             }
             final float target = clampSpeed(walk.floatValue());
             if (player.getWalkSpeed() != target) {
@@ -800,6 +830,7 @@ public final class MovementListener implements Listener {
         } else if (!savedWalkSpeed.isEmpty()) {
             final Float saved = savedWalkSpeed.remove(uuid);
             if (saved != null) {
+                owedChanged = true;
                 player.setWalkSpeed(saved);
             }
         }
@@ -807,7 +838,7 @@ public final class MovementListener implements Listener {
         final Double fly = toSet.worldUses(Flags.FLY_SPEED) ? toSet.queryValue(Flags.FLY_SPEED) : null;
         if (fly != null) {
             if (savedFlySpeed.get(uuid) == null) {
-                savedFlySpeed.putIfAbsent(uuid, player.getFlySpeed());
+                owedChanged |= savedFlySpeed.putIfAbsent(uuid, player.getFlySpeed()) == null;
             }
             final float target = clampSpeed(fly.floatValue());
             if (player.getFlySpeed() != target) {
@@ -816,20 +847,29 @@ public final class MovementListener implements Listener {
         } else if (!savedFlySpeed.isEmpty()) {
             final Float saved = savedFlySpeed.remove(uuid);
             if (saved != null) {
+                owedChanged = true;
                 player.setFlySpeed(saved);
             }
         }
 
         if (toSet.worldUses(Flags.FLY) && Boolean.TRUE.equals(toSet.queryValue(Flags.FLY))) {
             if (!player.getAllowFlight()) {
-                savedAllowFlight.putIfAbsent(uuid, Boolean.FALSE);
+                owedChanged |= savedAllowFlight.putIfAbsent(uuid, Boolean.FALSE) == null;
                 player.setAllowFlight(true);
             }
         } else if (!savedAllowFlight.isEmpty()) {
             final Boolean saved = savedAllowFlight.remove(uuid);
-            if (saved != null && !saved) {
-                player.setAllowFlight(false);
+            if (saved != null) {
+                owedChanged = true;
+                if (!saved) {
+                    player.setAllowFlight(false);
+                }
             }
+        }
+
+        if (owedChanged) {
+            restores.record(uuid, savedGameModes.get(uuid), savedWalkSpeed.get(uuid),
+                savedFlySpeed.get(uuid), savedAllowFlight.get(uuid));
         }
 
         collision.set(player, toSet.worldUses(Flags.DISABLE_COLLISION)
@@ -855,25 +895,30 @@ public final class MovementListener implements Listener {
      * restores them on leaving. State-transition based: the O(n) hide/show loop only runs when the
      * player crosses into or out of the hidden state, never per move.
      *
-     * <p>{@code hidePlayer}/{@code showPlayer} reach into the <em>target's</em> tracker entry to add
-     * or drop the viewer, so each call hops to the target's own scheduler rather than running on the
-     * mover's thread. The {@code hidden} flip stays here: it is a concurrent set and already atomic.
+     * <p>Both calls mutate the <em>viewer's</em> own hidden-entity map, so the whole loop runs on the
+     * viewer's scheduler. Fanning out to each target's thread instead would have N region threads
+     * writing one plain {@code HashMap} at once — lost entries, or a resize that spins a thread.
+     * The {@code hidden} flip stays out here: it is a concurrent set and already atomic.
      */
     private void applyHidePlayers(final Player player, final UUID uuid, final boolean shouldHide) {
         if (shouldHide) {
             if (hidden.add(uuid)) {
-                for (final Player other : Bukkit.getOnlinePlayers()) {
-                    if (other != player) {
-                        other.getScheduler().run(plugin, task -> player.hidePlayer(plugin, other), null);
+                player.getScheduler().run(plugin, _ -> {
+                    for (final Player other : Bukkit.getOnlinePlayers()) {
+                        if (other != player) {
+                            player.hidePlayer(plugin, other);
+                        }
                     }
-                }
+                }, null);
             }
         } else if (!hidden.isEmpty() && hidden.remove(uuid)) {
-            for (final Player other : Bukkit.getOnlinePlayers()) {
-                if (other != player) {
-                    other.getScheduler().run(plugin, task -> player.showPlayer(plugin, other), null);
+            player.getScheduler().run(plugin, _ -> {
+                for (final Player other : Bukkit.getOnlinePlayers()) {
+                    if (other != player) {
+                        player.showPlayer(plugin, other);
+                    }
                 }
-            }
+            }, null);
         }
     }
 
@@ -886,6 +931,10 @@ public final class MovementListener implements Listener {
     public void onJoin(final PlayerJoinEvent event) {
         final Player joiner = event.getPlayer();
 
+        replayPendingRestore(joiner);
+        if (SessionDispatch.ACTIVE) {
+            SessionDispatch.initialize(joiner);
+        }
         if (!hidden.isEmpty()) {
             for (final UUID viewerId : hidden) {
                 final Player viewer = Bukkit.getPlayer(viewerId);
@@ -904,10 +953,63 @@ public final class MovementListener implements Listener {
         }
     }
 
+    /**
+     * Replays outstanding restores for players who are already online, which only happens when the
+     * plugin was disabled and enabled again without anyone disconnecting. No join event is coming for
+     * them, so without this their override waits for a relog. Empty on an ordinary boot, where nobody
+     * is online yet.
+     *
+     * <p>Unlike the disable path this may schedule: the plugin is enabled here, so an entity task
+     * genuinely runs.
+     */
+    public void replayOnlineRestores() {
+        for (final Player player : plugin.getServer().getOnlinePlayers()) {
+            player.getScheduler().run(plugin, _ -> replayPendingRestore(player), null);
+        }
+    }
+
+    /**
+     * Puts back an override a previous shutdown could not undo itself, for a player who was standing
+     * in the region at the time. The join event runs on the joiner's own thread, which is the one
+     * allowed to make the change.
+     *
+     * <p>Runs before anything else in the handler, so if they have logged straight back into the same
+     * region {@link #applyState} saves the value they actually started with rather than the override
+     * still on them.
+     */
+    private void replayPendingRestore(final Player player) {
+        final PendingRestores.State owed = restores.take(player.getUniqueId());
+        if (owed != null) {
+            apply(player, owed);
+        }
+    }
+
+    /**
+     * Puts one player's owed state back. Only ever called on that player's own thread — from their
+     * join, or from the disable for the players the disabling region owns.
+     */
+    private static void apply(final Player player, final PendingRestores.State owed) {
+        if (owed.gameMode() != null) {
+            player.setGameMode(owed.gameMode());
+        }
+        if (owed.walkSpeed() != null) {
+            player.setWalkSpeed(owed.walkSpeed());
+        }
+        if (owed.flySpeed() != null) {
+            player.setFlySpeed(owed.flySpeed());
+        }
+        if (owed.allowFlight() != null && !owed.allowFlight()) {
+            player.setAllowFlight(false);
+        }
+    }
+
     @EventHandler
     public void onQuit(final PlayerQuitEvent event) {
         final Player player = event.getPlayer();
         final UUID uuid = player.getUniqueId();
+        if (SessionDispatch.TRACKING) {
+            SessionDispatch.uninitialize(player);
+        }
         messages.clear(uuid);
         collision.set(player, false);
         pearls.clear(uuid);
@@ -932,6 +1034,7 @@ public final class MovementListener implements Listener {
         if (allowFlight != null && !allowFlight) {
             player.setAllowFlight(false);
         }
+        restores.forget(uuid);
     }
 
     private static float clampSpeed(final float value) {

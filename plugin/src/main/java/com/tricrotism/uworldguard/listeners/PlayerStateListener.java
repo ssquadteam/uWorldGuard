@@ -7,6 +7,7 @@ import com.tricrotism.uworldguard.region.ApplicableRegionSet;
 import com.tricrotism.uworldguard.region.ProtectedRegion;
 import com.tricrotism.uworldguard.region.RegionQuery;
 import com.tricrotism.uworldguard.text.MessageService;
+import com.tricrotism.uworldguard.wgcompat.SessionDispatch;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
@@ -71,6 +72,11 @@ public final class PlayerStateListener implements Listener {
         };
         if (flag != null && !query.testState(event.getTo(), flag)
             && !Bypass.has(event.getPlayer())) {
+            event.setCancelled(true);
+            return;
+        }
+        if (SessionDispatch.ACTIVE && SessionDispatch.testMove(
+            event.getPlayer(), event.getFrom(), event.getTo(), SessionDispatch.Move.TELEPORT) != null) {
             event.setCancelled(true);
             return;
         }

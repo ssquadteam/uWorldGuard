@@ -23,9 +23,17 @@ import java.util.logging.Level;
 @NullMarked
 public final class RegionContainerImpl implements RegionContainer {
 
+    /**
+     * A loaded world's regions together with the name they persist under. The name is held rather
+     * than resolved: the autosave runs on the async scheduler, and {@code Bukkit.getWorld(uid)} walks
+     * the server's world map, which is not concurrent — a world loading or unloading mid-sweep could
+     * take the save down with a {@code ConcurrentModificationException}.
+     */
+    private record Loaded(String name, RegionManager manager) {}
+
     private final Plugin plugin;
     private final RegionStore store;
-    private final Map<UUID, RegionManager> managers = new ConcurrentHashMap<>();
+    private final Map<UUID, Loaded> loaded = new ConcurrentHashMap<>();
     private final Set<String> failedLoads = ConcurrentHashMap.newKeySet();
     /**
      * One monitor per world, held across its {@link RegionStore#save} call. Three writers can reach
@@ -66,7 +74,7 @@ public final class RegionContainerImpl implements RegionContainer {
                 manager.addRegion(new GlobalProtectedRegion());
             }
             manager.clearDirty();
-            managers.put(world.getUID(), manager);
+            loaded.put(world.getUID(), new Loaded(name, manager));
             warnAboutUnenforcedGroups(name, manager);
         }
     }
@@ -98,7 +106,7 @@ public final class RegionContainerImpl implements RegionContainer {
                 manager.addRegion(new GlobalProtectedRegion());
             }
             manager.clearDirty();
-            managers.put(uid, manager);
+            loaded.put(uid, new Loaded(name, manager));
             warnAboutUnenforcedGroups(name, manager);
         });
         return manager;
@@ -142,9 +150,9 @@ public final class RegionContainerImpl implements RegionContainer {
     }
 
     public void unload(final World world) {
-        final RegionManager manager = managers.remove(world.getUID());
-        if (manager != null) {
-            saveAsync(world.getName(), manager, () -> {});
+        final Loaded removed = loaded.remove(world.getUID());
+        if (removed != null) {
+            saveAsync(removed.name(), removed.manager(), () -> {});
         }
     }
 
@@ -152,10 +160,10 @@ public final class RegionContainerImpl implements RegionContainer {
      * Persist every dirty world off-thread.
      */
     public void saveAll() {
-        managers.forEach((uid, manager) -> {
-            final World world = Bukkit.getWorld(uid);
-            if (world != null && manager.clearDirty()) {
-                saveAsync(world.getName(), manager, manager::markDirty);
+        loaded.forEach((_, world) -> {
+            final RegionManager manager = world.manager();
+            if (manager.clearDirty()) {
+                saveAsync(world.name(), manager, manager::markDirty);
             }
         });
     }
@@ -164,12 +172,12 @@ public final class RegionContainerImpl implements RegionContainer {
      * Persist every world synchronously — for plugin shutdown, where the async scheduler is stopping.
      */
     public void saveAllBlocking() {
-        managers.forEach((uid, manager) -> {
-            final World world = Bukkit.getWorld(uid);
-            if (world == null || failedLoads.contains(world.getName())) {
+        loaded.forEach((_, world) -> {
+            final String name = world.name();
+            if (failedLoads.contains(name)) {
                 return;
             }
-            final String name = world.getName();
+            final RegionManager manager = world.manager();
             try {
                 synchronized (saveLocks.computeIfAbsent(name, k -> new Object())) {
                     store.save(name, manager);
@@ -206,7 +214,8 @@ public final class RegionContainerImpl implements RegionContainer {
 
     @Override
     public @Nullable RegionManager get(final World world) {
-        return managers.get(world.getUID());
+        final Loaded found = loaded.get(world.getUID());
+        return found == null ? null : found.manager();
     }
 
     /**
@@ -214,8 +223,8 @@ public final class RegionContainerImpl implements RegionContainer {
      * answers from a cached index. Lets periodic tasks skip work entirely when a flag is unused.
      */
     public boolean anyRegionUses(final com.tricrotism.uworldguard.flags.Flag<?> flag) {
-        for (final RegionManager manager : managers.values()) {
-            if (manager.anyRegionUses(flag)) {
+        for (final Loaded world : loaded.values()) {
+            if (world.manager().anyRegionUses(flag)) {
                 return true;
             }
         }

@@ -19,12 +19,16 @@ public final class WorldListener implements Listener {
 
     private final RegionContainerImpl container;
     private final ChunkUnloadService chunkUnload;
+    private final MovementListener movement;
     private final @Nullable WandSelectionProvider wand;
 
-    public WorldListener(final RegionContainerImpl container, final ChunkUnloadService chunkUnload,
-                         final @Nullable WandSelectionProvider wand) {
+    public WorldListener(
+        final RegionContainerImpl container, final ChunkUnloadService chunkUnload,
+        final MovementListener movement, final @Nullable WandSelectionProvider wand
+    ) {
         this.container = container;
         this.chunkUnload = chunkUnload;
+        this.movement = movement;
         this.wand = wand;
     }
 
@@ -42,6 +46,7 @@ public final class WorldListener implements Listener {
     public void onWorldUnload(final WorldUnloadEvent event) {
         container.unload(event.getWorld());
         chunkUnload.forget(event.getWorld());
+        movement.forgetWorld(event.getWorld());
         if (wand != null) {
             wand.forgetWorld(event.getWorld());
         }

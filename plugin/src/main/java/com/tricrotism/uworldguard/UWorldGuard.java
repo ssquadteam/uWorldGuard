@@ -1,6 +1,8 @@
 package com.tricrotism.uworldguard;
 
+import com.tricrotism.uworldguard.commands.CompatCommands;
 import com.tricrotism.uworldguard.commands.RegionCommands;
+import com.tricrotism.uworldguard.config.Bypass;
 import com.tricrotism.uworldguard.config.ConfigUpdater;
 import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.config.Settings;
@@ -9,6 +11,7 @@ import com.tricrotism.uworldguard.gui.ChatInputService;
 import com.tricrotism.uworldguard.integration.GSitIntegration;
 import com.tricrotism.uworldguard.listeners.*;
 import com.tricrotism.uworldguard.migration.MigrationCommands;
+import com.tricrotism.uworldguard.packet.PacketSink;
 import com.tricrotism.uworldguard.region.RegionContainer;
 import com.tricrotism.uworldguard.region.RegionContainerImpl;
 import com.tricrotism.uworldguard.region.RegionQuery;
@@ -20,10 +23,13 @@ import com.tricrotism.uworldguard.storage.SqlRegionStore;
 import com.tricrotism.uworldguard.storage.YamlRegionStore;
 import com.tricrotism.uworldguard.text.ChatTags;
 import com.tricrotism.uworldguard.text.MessageService;
+import com.tricrotism.uworldguard.wgcompat.FlagBridge;
+import com.tricrotism.uworldguard.wgcompat.SessionDispatch;
+import com.tricrotism.uworldguard.wgcompat.WgCompatBridge;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bstats.bukkit.Metrics;
+import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.ServicePriority;
-import org.bukkit.plugin.java.JavaPlugin;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 import xyz.xenondevs.invui.InvUI;
@@ -34,7 +40,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
 @NullMarked
-public final class UWorldGuard extends JavaPlugin {
+public final class UWorldGuard extends com.sk89q.worldguard.bukkit.WorldGuardPlugin {
 
     private @Nullable RegionContainerImpl container;
     private @Nullable Settings settings;
@@ -43,7 +49,10 @@ public final class UWorldGuard extends JavaPlugin {
     private @Nullable WorldEditFlagGuard worldEditGuard;
     private @Nullable RegionStore store;
     private @Nullable Metrics metrics;
-    private @Nullable ScheduledTask autoSaveTask;
+    private volatile @Nullable ScheduledTask autoSaveTask;
+    private @Nullable PlayerTickService playerTick;
+    private @Nullable ChunkUnloadService chunkUnload;
+    private @Nullable PendingRestores restores;
 
     /**
      * Re-reads {@code config.yml} and applies everything that can change at runtime. Movement mode
@@ -104,6 +113,7 @@ public final class UWorldGuard extends JavaPlugin {
         EventGate.load(getConfig());
 
         GSitIntegration.registerFlags();
+        final boolean worldGuardCompat = prepareWorldGuardCompat();
 
         final RegionStore store = createStore(settings);
         this.store = store;
@@ -115,6 +125,9 @@ public final class UWorldGuard extends JavaPlugin {
         getServer().getServicesManager().register(
             RegionContainer.class, regionContainer, this, ServicePriority.Normal);
         UWorldGuardApi.bind(regionContainer);
+        if (worldGuardCompat) {
+            activateWorldGuardCompat(regionContainer);
+        }
 
         final RegionQuery query = regionContainer.createQuery();
         final SelectionService selection = new SelectionService(this, settings);
@@ -125,8 +138,14 @@ public final class UWorldGuard extends JavaPlugin {
         final ChatInputService chatInput = new ChatInputService();
         final ChatTags chatTags = new ChatTags();
 
+        final PendingRestores restores = new PendingRestores(this);
+        this.restores = restores;
+        restores.start();
+
+        activatePackets();
         getServer().getPluginManager().registerEvents(new BuildProtectionListener(query, messages), this);
-        final MovementListener movement = new MovementListener(this, query, messages, collision, pearls, chatTags, settings);
+        final MovementListener movement =
+            new MovementListener(this, query, messages, collision, pearls, chatTags, restores, settings);
         this.movement = movement;
         getServer().getPluginManager().registerEvents(movement, this);
         getServer().getPluginManager().registerEvents(new NaturalListener(query), this);
@@ -141,9 +160,10 @@ public final class UWorldGuard extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new PearlListener(pearls), this);
         getServer().getPluginManager().registerEvents(new ChatInputListener(this, chatInput), this);
         final ChunkUnloadService chunkUnload = new ChunkUnloadService(this, regionContainer);
+        this.chunkUnload = chunkUnload;
         final WandSelectionProvider wand = selection.wandListener();
         getServer().getPluginManager().registerEvents(
-            new WorldListener(regionContainer, chunkUnload, wand), this);
+            new WorldListener(regionContainer, chunkUnload, movement, wand), this);
         getServer().getPluginManager().registerEvents(new ChatListener(chatTags), this);
         getServer().getPluginManager().registerEvents(new CommandListener(query, messages), this);
         getServer().getPluginManager().registerEvents(new PistonListener(query), this);
@@ -155,10 +175,13 @@ public final class UWorldGuard extends JavaPlugin {
         }
 
         new RegionCommands(this, regionContainer, selection, chatInput, messages)
-            .register(new MigrationCommands(this, regionContainer));
+            .register(new MigrationCommands(this, regionContainer), new CompatCommands());
 
         movement.start();
-        new PlayerTickService(this, regionContainer, query).start();
+        movement.replayOnlineRestores();
+        final PlayerTickService playerTick = new PlayerTickService(this, regionContainer, query);
+        this.playerTick = playerTick;
+        playerTick.start();
         chunkUnload.start();
 
         if (getServer().getPluginManager().getPlugin("WorldEdit") != null) {
@@ -172,12 +195,82 @@ public final class UWorldGuard extends JavaPlugin {
 
         scheduleAutoSave(settings);
 
-        if (settings.updateCheck() && !settings.updateUrl().isBlank()) {
-            new UpdateChecker(this, settings.updateUrl()).start();
+        if (settings.updateCheck()) {
+            new UpdateChecker(this).start();
         }
 
         // bStats | https://bstats.org/plugin/bukkit/uWorldGuard/32190
         this.metrics = new Metrics(this, 32190);
+    }
+
+    /**
+     * Decides whether the bundled WorldGuard 7 API compatibility layer can run, and if so registers
+     * the flags it contributes.
+     *
+     * <p>Two things have to be true. WorldEdit must be present, because WorldGuard's API signatures
+     * are built out of WorldEdit types and its consumers call {@code BukkitAdapter} themselves.
+     * And nothing else may already answer to the name "WorldGuard" — we declare {@code provides}
+     * for it, so if the real plugin is installed too, both would claim the same API and whichever
+     * one a consumer reached would be a coin toss.
+     *
+     * <p>Separate from {@link #activateWorldGuardCompat} because of when each half has to run. The
+     * shim contributes engine flags of its own ({@code teleport}, {@code teleport-message} and the
+     * rest of the WorldGuard-only set), and {@code RegionSerializer} drops any stored flag whose name
+     * is not registered by the time the world is read — so registering after the load silently threw
+     * those values away and the next autosave persisted their absence. The binding half still needs
+     * the container, which does not exist yet, so it stays where it was.
+     *
+     * @return whether {@link #activateWorldGuardCompat} should run once the container exists
+     */
+    private boolean prepareWorldGuardCompat() {
+        final Plugin claimant = getServer().getPluginManager().getPlugin("WorldGuard");
+        if (claimant != null && claimant != this) {
+            WgCompatBridge.markInactive("another plugin provides WorldGuard ("
+                + claimant.getName() + " " + claimant.getPluginMeta().getVersion() + ")");
+            getLogger().severe("WorldGuard is installed alongside uWorldGuard. The WorldGuard API"
+                + " compatibility layer is disabled — remove one of the two plugins.");
+            return false;
+        }
+        if (getServer().getPluginManager().getPlugin("WorldEdit") == null) {
+            WgCompatBridge.markInactive("WorldEdit is not installed");
+            getLogger().warning("WorldGuard API compatibility layer inactive: WorldEdit is not"
+                + " installed. Plugins that require WorldGuard will not function.");
+            return false;
+        }
+        FlagBridge.registerDormantFlags();
+        return true;
+    }
+
+    /**
+     * Binds the compatibility layer to the loaded container, so plugins built against WorldGuard see
+     * uWorldGuard's regions and flags. Only called when {@link #prepareWorldGuardCompat} cleared it.
+     */
+    private void activateWorldGuardCompat(final RegionContainer regionContainer) {
+        WgCompatBridge.bind(regionContainer, this);
+        WgCompatBridge.bypassCheck(Bypass::has);
+        getLogger().info("WorldGuard API compatibility layer active (emulating the WorldGuard 7 API"
+            + " — this is uWorldGuard " + getPluginMeta().getVersion()
+            + ", not EngineHub WorldGuard).");
+    }
+
+    /**
+     * Arms the packet layer behind {@code disable-collision}.
+     *
+     * <p>PacketEvents is optional, so this is the one place that decides. Nothing else in the plugin
+     * names a PacketEvents class — {@code PacketHooks} is the seam, and {@code PacketSink} (which
+     * does name them) is loaded only from here, after the plugin has been seen. Without it
+     * collision still works for every player on the main scoreboard, which is nearly all of them.
+     */
+    private void activatePackets() {
+        if (getServer().getPluginManager().getPlugin("PacketEvents") == null) {
+            return;
+        }
+        try {
+            PacketSink.install();
+        } catch (final LinkageError | RuntimeException e) {
+            getLogger().log(Level.WARNING, "PacketEvents is installed but its API could not be used;"
+                + " players on a per-player scoreboard will not get client-side disable-collision.", e);
+        }
     }
 
     private RegionStore createStore(final Settings settings) {
@@ -198,11 +291,25 @@ public final class UWorldGuard extends JavaPlugin {
      */
     @Override
     public void onDisable() {
+        SessionDispatch.shutdown();
+        WgCompatBridge.unbind();
         UWorldGuardApi.bind(null);
         final ScheduledTask autoSave = this.autoSaveTask;
         if (autoSave != null) {
             autoSave.cancel();
             this.autoSaveTask = null;
+        }
+        if (playerTick != null) {
+            playerTick.stop();
+            playerTick = null;
+        }
+        if (chunkUnload != null) {
+            chunkUnload.stop();
+            chunkUnload = null;
+        }
+        if (restores != null) {
+            restores.stop();
+            restores = null;
         }
         if (movement != null) {
             movement.stop();
@@ -215,6 +322,7 @@ public final class UWorldGuard extends JavaPlugin {
         if (collision != null) {
             collision.shutdown();
         }
+        PacketSink.uninstall();
         if (metrics != null) {
             metrics.shutdown();
             metrics = null;

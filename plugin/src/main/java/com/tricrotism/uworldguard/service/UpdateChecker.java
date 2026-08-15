@@ -24,6 +24,8 @@ import java.util.regex.Pattern;
 @NullMarked
 public final class UpdateChecker {
 
+    private static final String RELEASES_URL =
+        "https://api.github.com/repos/tricrotism/uWorldGuard/releases/latest";
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
     private static final int SUMMARY_LIMIT = 120;
 
@@ -37,11 +39,9 @@ public final class UpdateChecker {
     private static final Pattern NOT_DIGITS = Pattern.compile("[^0-9]+");
 
     private final Plugin plugin;
-    private final String url;
 
-    public UpdateChecker(final Plugin plugin, final String url) {
+    public UpdateChecker(final Plugin plugin) {
         this.plugin = plugin;
-        this.url = url;
     }
 
     public void start() {
@@ -150,7 +150,7 @@ public final class UpdateChecker {
 
     private @Nullable String fetch() {
         try (HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build()) {
-            final HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+            final HttpRequest request = HttpRequest.newBuilder(URI.create(RELEASES_URL))
                 .header("Accept", "application/vnd.github+json")
                 .header("User-Agent", plugin.getName() + "/" + plugin.getPluginMeta().getVersion())
                 .timeout(TIMEOUT)

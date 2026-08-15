@@ -399,11 +399,48 @@ Flags that can send a denial: `block-break`, `block-place`, `interact`, `chest-a
 
 All optional — install them or don't, nothing breaks either way.
 
-| Plugin             | What it adds                                                                                                                   |
-|--------------------|--------------------------------------------------------------------------------------------------------------------------------|
-| **WorldEdit**      | Use WorldEdit selections instead of the built-in wand; required for `define-polygon`                                           |
-| **PlaceholderAPI** | `%placeholders%` in message flags and in `entry-min-level` / `entry-max-level`                                                 |
-| **GSit**           | Four extra flags — `sit`, `playersit`, `pose`, `crawl` — enforced by uWorldGuard, since GSit can't see region flags on its own |
+| Plugin             | What it adds                                                                                                                           |
+|--------------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| **WorldEdit**      | Use WorldEdit selections instead of the built-in wand; required for `define-polygon`; activates the WorldGuard API compatibility layer |
+| **PlaceholderAPI** | `%placeholders%` in message flags and in `entry-min-level` / `entry-max-level`                                                         |
+| **GSit**           | Four extra flags — `sit`, `playersit`, `pose`, `crawl` — enforced by uWorldGuard, since GSit can't see region flags on its own         |
+| **PacketEvents**   | Makes `disable-collision` work for players another plugin has put on a per-player scoreboard                                           |
+
+**What PacketEvents changes.** One thing, and only for a niche case. uWorldGuard's no-collision team lives on the *main*
+scoreboard, which is what the server itself reads — so collision is correctly disabled server-side for everyone, with or
+without PacketEvents. But collision is also predicted on every client, and a player another plugin has moved to a
+per-player scoreboard never receives that team. With PacketEvents, the team is sent to those clients directly.
+
+It goes to every such client, not just the affected player: each client predicts collision for *its own* player, so a
+bystander who does not know you are uncollidable keeps pushing themselves off you and rubber-bands against a server that
+disagrees.
+
+Known limitation: if another plugin moves a player onto a per-player scoreboard *while* they are already inside a
+`disable-collision` region, their client is not re-sent the team until they leave and re-enter — there is no event to
+notice the switch.
+
+### WorldGuard compatibility
+
+uWorldGuard can stand in for WorldGuard: plugins built against the WorldGuard 7 API (mcMMO, shop plugins, quest
+plugins, …) link against a bundled compatibility layer that answers with uWorldGuard's regions and flags.
+
+- **Requirements:** WorldEdit (or FAWE) must be installed — the WorldGuard API is built on WorldEdit types. Without it
+  the layer stays off and uWorldGuard runs normally.
+- **Remove `WorldGuard.jar`.** uWorldGuard *provides* the plugin name "WorldGuard"; the real plugin and the
+  compatibility layer cannot coexist. uWorldGuard detects the conflict and keeps the layer off with a loud log message.
+- Plugins that `depend`/`softdepend` on WorldGuard load and order correctly;
+  `getPlugin("WorldGuard")` resolves to uWorldGuard.
+- **Version checks:** uWorldGuard reports its own version (1.x), not "7.x". A plugin that gates its WorldGuard hook on a
+  version string starting with `7` will decline to hook, even though the API is present.
+- **Session handlers** registered through `SessionManager.registerHandler` are driven by uWorldGuard's own movement
+  tracker: `testMoveTo` and `onCrossBoundary` fire on every region crossing — walking, swimming, gliding, riding,
+  mounting, teleporting and respawning each report their own `MoveType` — with `tick` once a second and `initialize`/
+  `uninitialize` on join and quit. One deviation: the tick is once a second rather than every server tick.
+- **Group flags** (`group.<name>` domains) resolve from the `group.<name>` permission node, which is what Vault-backed
+  permissions plugins publish. Offline players never match.
+- `/uwg compat` shows whether the layer is active, what API surface plugins have used, and which calls hit unimplemented
+  stubs — check it first when a plugin misbehaves.
+- This is **not** EngineHub's WorldGuard. Do not report issues with it to EngineHub — report them to uWorldGuard.
 
 ---
 
@@ -541,3 +578,12 @@ downloaded at boot by `UWorldGuardLoader`. Only bStats is shaded, relocated out 
 ## License
 
 See [LICENSE.md](LICENSE.md).
+
+**WorldGuard API compatibility layer:** uWorldGuard ships a WorldGuard API compatibility layer:
+the `com.sk89q.worldguard.*` classes bundled in the jar are an independent, clean-room reimplementation of WorldGuard
+7's public API, provided solely for interoperability with plugins built against that API. This module is licensed
+**LGPL-3.0-or-later**; its source lives in
+[`wg-compat/`](wg-compat/) of the uWorldGuard repository, and the license texts ship inside the jar at
+`META-INF/licenses/wg-compat/`. The remainder of uWorldGuard keeps its existing license. WorldGuard is a project of the
+EngineHub team; uWorldGuard is not affiliated with or endorsed by EngineHub or sk89q, and "WorldGuard" is used only to
+describe compatibility. uWorldGuard reports its own version (1.x), not a WorldGuard 7.x version.

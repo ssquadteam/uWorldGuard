@@ -7,9 +7,11 @@ import com.tricrotism.uworldguard.region.RegionContainerImpl;
 import com.tricrotism.uworldguard.region.RegionManager;
 import com.tricrotism.uworldguard.region.RegionType;
 import com.tricrotism.uworldguard.util.BlockVector3;
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bukkit.World;
 import org.bukkit.plugin.Plugin;
 import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 
 import java.util.HashSet;
 import java.util.Map;
@@ -44,6 +46,7 @@ public final class ChunkUnloadService {
      * would also silence the warning for a same-named region in another world.
      */
     private final Set<String> warned = ConcurrentHashMap.newKeySet();
+    private volatile @Nullable ScheduledTask task;
 
     public ChunkUnloadService(final Plugin plugin, final RegionContainerImpl container) {
         this.plugin = plugin;
@@ -51,8 +54,21 @@ public final class ChunkUnloadService {
     }
 
     public void start() {
-        plugin.getServer().getGlobalRegionScheduler()
+        task = plugin.getServer().getGlobalRegionScheduler()
             .runAtFixedRate(plugin, _ -> reconcile(), PERIOD_TICKS, PERIOD_TICKS);
+    }
+
+    /**
+     * Cancels the reconcile. The chunk tickets themselves need no cleanup — Paper scopes them to this
+     * plugin and drops them on disable — but holding the handle means the service can be stopped
+     * without one.
+     */
+    public void stop() {
+        final ScheduledTask running = task;
+        if (running != null) {
+            running.cancel();
+            task = null;
+        }
     }
 
     /**

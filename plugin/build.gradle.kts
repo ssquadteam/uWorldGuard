@@ -19,6 +19,8 @@ dependencies {
     // Our own API — compiled against and bundled into the plugin jar (see the jar task).
     implementation(project(":api"))
 
+    implementation(project(":wg-compat"))
+
     implementation(libs.bstats.bukkit)
 
     // Cloud + Caffeine — downloaded at boot by the PluginLoader (UWorldGuardLoader), not shaded.
@@ -51,15 +53,24 @@ tasks {
     // Bundle the API module's classes into the plugin jar so dependent plugins resolve
     // them at runtime from uWorldGuard's classloader.
     named<Jar>("jar") {
-        dependsOn(":api:jar")
+        dependsOn(":api:jar", ":wg-compat:jar")
         from(project(":api").sourceSets["main"].output)
+        from(project(":wg-compat").sourceSets["main"].output)
     }
 
     shadowJar {
         archiveBaseName.set("uWorldGuard")
         archiveClassifier.set("")
-        dependsOn(":api:jar")
+        dependsOn(":api:jar", ":wg-compat:jar")
         from(project(":api").sourceSets["main"].output)
+        from(project(":wg-compat").sourceSets["main"].output)
+        // LGPL-3.0 obliges us to ship the license texts alongside the compat layer's classes.
+        from(project(":wg-compat").file("COPYING")) { into("META-INF/licenses/wg-compat") }
+        from(project(":wg-compat").file("COPYING.LESSER")) { into("META-INF/licenses/wg-compat") }
+        from(project(":wg-compat").file("README.md")) {
+            into("META-INF/licenses/wg-compat")
+            rename { "README-wg-compat.md" }
+        }
         configurations = project.configurations.runtimeClasspath.map { setOf(it) }
         dependencies {
             exclude { it.moduleGroup != "org.bstats" }

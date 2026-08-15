@@ -71,10 +71,6 @@ public final class Settings {
         return updateCheck;
     }
 
-    public String updateUrl() {
-        return "https://api.github.com/repos/tricrotism/uWorldGuard/releases/latest";
-    }
-
     public boolean isSqlEnabled() {
         return sqlEnabled && "sql".equalsIgnoreCase(storageType);
     }

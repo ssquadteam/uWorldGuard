@@ -1,3 +1,3 @@
 rootProject.name = "uWorldGuard"
 
-include("api", "plugin")
+include("api", "plugin", "wg-compat")

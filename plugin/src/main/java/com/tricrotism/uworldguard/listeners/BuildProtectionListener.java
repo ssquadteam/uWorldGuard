@@ -182,7 +182,7 @@ public final class BuildProtectionListener implements Listener {
         final ApplicableRegionSet set = query.getApplicableRegions(block);
         if (!set.canBuild(player.getUniqueId())
             && (!set.testState(Flags.INTERACT, player.getUniqueId())
-            || !set.testState(Flags.USE, player.getUniqueId()))) {
+            || (block.getType().isInteractable() && !set.testState(Flags.USE, player.getUniqueId())))) {
             if (Bypass.has(player)) {
                 return;
             }

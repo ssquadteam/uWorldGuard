@@ -22,8 +22,6 @@ public class UWorldGuardLoader implements PluginLoader {
         resolver.addDependency(new Dependency(
             new DefaultArtifact("org.incendo:cloud-paper:2.0.0-beta.15"), null));
         resolver.addDependency(new Dependency(
-            new DefaultArtifact("xyz.xenondevs.invui:invui:2.2.0"), null));
-        resolver.addDependency(new Dependency(
             new DefaultArtifact("org.incendo:cloud-annotations:2.0.0"), null));
         resolver.addDependency(new Dependency(
             new DefaultArtifact("com.github.ben-manes.caffeine:caffeine:3.1.8"), null));

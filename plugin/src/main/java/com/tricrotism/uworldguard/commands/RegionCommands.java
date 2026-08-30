@@ -7,6 +7,7 @@ import com.tricrotism.uworldguard.flags.*;
 import com.tricrotism.uworldguard.flags.Flag;
 import com.tricrotism.uworldguard.gui.ChatInputService;
 import com.tricrotism.uworldguard.gui.FlagMenu;
+import com.tricrotism.uworldguard.gui.MenuSupport;
 import com.tricrotism.uworldguard.gui.RegionMenu;
 import com.tricrotism.uworldguard.gui.SettingsMenu;
 import com.tricrotism.uworldguard.region.*;
@@ -663,6 +664,7 @@ public final class RegionCommands {
     public void menu(final Source sender) {
         final Player player = asPlayer(sender);
         if (player == null) return;
+        if (refuseWithoutMenus(sender)) return;
 
         final RegionManager regionManager = container.get(player.getWorld());
         if (regionManager == null) {
@@ -673,12 +675,20 @@ public final class RegionCommands {
         new RegionMenu(plugin, player.getWorld(), regionManager, selection, chatInput).open(player);
     }
 
+    private boolean refuseWithoutMenus(final Source sender) {
+        if (MenuSupport.available()) return false;
+        error(sender, "Menus are not available on this Minecraft version."
+            + " Every menu action has a command — see <aqua>/wg</aqua>.");
+        return true;
+    }
+
     @Command("uworldguard|uwg|worldguard|wg settings")
     @CommandDescription("Open the settings menu")
     @Permission("uworldguard.settings")
     public void settings(final Source sender) {
         final Player player = asPlayer(sender);
         if (player == null) return;
+        if (refuseWithoutMenus(sender)) return;
 
         new SettingsMenu(plugin, messages, chatInput).open(player);
     }
@@ -699,6 +709,7 @@ public final class RegionCommands {
     public void menu(final Source sender, @Argument(value = "id", suggestions = "region-ids") final String id) {
         final Player player = asPlayer(sender);
         if (player == null) return;
+        if (refuseWithoutMenus(sender)) return;
 
         final RegionManager regionManager = container.get(player.getWorld());
         if (regionManager == null) {

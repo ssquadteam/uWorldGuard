@@ -8,6 +8,7 @@ import com.tricrotism.uworldguard.config.EventGate;
 import com.tricrotism.uworldguard.config.Settings;
 import com.tricrotism.uworldguard.gui.ChatInputListener;
 import com.tricrotism.uworldguard.gui.ChatInputService;
+import com.tricrotism.uworldguard.gui.MenuSupport;
 import com.tricrotism.uworldguard.integration.GSitIntegration;
 import com.tricrotism.uworldguard.listeners.*;
 import com.tricrotism.uworldguard.migration.MigrationCommands;
@@ -32,7 +33,6 @@ import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.ServicePriority;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
-import xyz.xenondevs.invui.InvUI;
 
 import java.io.File;
 import java.util.List;
@@ -98,7 +98,12 @@ public final class UWorldGuard extends com.sk89q.worldguard.bukkit.WorldGuardPlu
 
     @Override
     public void onEnable() {
-        InvUI.getInstance().setPlugin(this);
+        if (MenuSupport.available()) {
+            MenuSupport.install(this);
+        } else {
+            getLogger().info("InvUI is not available on this Minecraft version;"
+                + " /wg menu and /wg settings are disabled. Commands cover everything they did.");
+        }
         saveDefaultConfig();
         final List<String> addedSettings =
             ConfigUpdater.merge(this, new File(getDataFolder(), "config.yml"), "config.yml");

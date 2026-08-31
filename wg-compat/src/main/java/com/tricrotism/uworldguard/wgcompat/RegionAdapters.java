@@ -17,16 +17,15 @@ import com.sk89q.worldguard.protection.regions.ProtectedRegion;
  * Canonical shim wrappers for engine regions and region managers.
  *
  * <p>Consumers compare regions by identity and use them as map keys, so wrapping the same engine
- * region twice has to yield the same instance. Caffeine's {@code weakKeys().weakValues()} gives that
- * with identity comparison and without pinning a deleted region alive.
+ * region twice has to yield the same instance. A region carries its own shim in a field, so the
+ * common case is a volatile read rather than a cache lookup; the shim dies with the region that
+ * holds it, so a deleted region is not pinned alive either. Managers are wrapped once per world and
+ * stay on Caffeine.
  *
  * <p>Applicable-region sets are deliberately <em>not</em> cached: the engine builds a fresh one per
  * query and drops it immediately, so a cache would cost more than the wrapper it saves.
  */
 public final class RegionAdapters {
-
-    private static final Cache<com.tricrotism.uworldguard.region.ProtectedRegion, ProtectedRegion> REGIONS =
-        Caffeine.newBuilder().weakKeys().weakValues().build();
 
     private static final Cache<com.tricrotism.uworldguard.region.RegionManager, RegionManager> MANAGERS =
         Caffeine.newBuilder().weakKeys().weakValues().build();
@@ -41,15 +40,12 @@ public final class RegionAdapters {
     public static ProtectedRegion region(
         final com.tricrotism.uworldguard.region.ProtectedRegion backing, final com.tricrotism.uworldguard.region.RegionManager manager
     ) {
-        final ProtectedRegion existing = REGIONS.getIfPresent(backing);
-        if (existing != null) {
-            if (manager != null) {
-                existing.uwgAttach(manager);
-            }
-            return existing;
+        Object held = backing.uwgCompat();
+        if (held == null) {
+            CompatDiagnostics.WRAPS.increment();
+            held = backing.uwgLinkCompat(create(backing));
         }
-        CompatDiagnostics.WRAPS.increment();
-        final ProtectedRegion shim = create(backing);
+        final ProtectedRegion shim = (ProtectedRegion) held;
         if (manager != null) {
             shim.uwgAttach(manager);
         }
@@ -72,7 +68,7 @@ public final class RegionAdapters {
     public static void link(
         final com.tricrotism.uworldguard.region.ProtectedRegion backing, final ProtectedRegion shim
     ) {
-        REGIONS.put(backing, shim);
+        backing.uwgLinkCompat(shim);
     }
 
     private static ProtectedRegion create(final com.tricrotism.uworldguard.region.ProtectedRegion backing) {

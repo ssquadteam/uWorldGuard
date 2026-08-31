@@ -8,6 +8,8 @@ import com.tricrotism.uworldguard.util.BlockVector3;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
@@ -34,6 +36,37 @@ public abstract class ProtectedRegion {
 
     private volatile int priority;
     private volatile @Nullable ProtectedRegion parent;
+    private volatile @Nullable Object compat;
+
+    private static final VarHandle COMPAT;
+
+    static {
+        try {
+            COMPAT = MethodHandles.lookup().findVarHandle(ProtectedRegion.class, "compat", Object.class);
+        } catch (final ReflectiveOperationException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    /**
+     * Internal: the wg-compat shim view of this region, or {@code null} before one is built. Held
+     * here rather than in a side cache so a wrap is a field read, not a map lookup — the shim layer
+     * wraps every region of every query result, so this sits on the hottest path in the plugin.
+     * Typed as {@code Object} because the engine must not depend on the compat layer.
+     */
+    public @Nullable Object uwgCompat() {
+        return compat;
+    }
+
+    /**
+     * Internal: publish {@code shim} as this region's canonical compat view, returning whichever
+     * instance won if two threads raced. Consumers use shim regions as map keys and compare them by
+     * identity, so exactly one may ever escape.
+     */
+    public Object uwgLinkCompat(final Object shim) {
+        final Object witness = COMPAT.compareAndExchange(this, null, shim);
+        return witness == null ? shim : witness;
+    }
 
     /**
      * Longest id accepted by {@link #isValidId}. Long enough for any descriptive name, short enough
